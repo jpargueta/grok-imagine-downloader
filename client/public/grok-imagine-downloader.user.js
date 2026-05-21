@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.0
-// @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite them to remove them from the server.
+// @version      1.1.0
+// @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite them to remove them from the server. Includes Dry Run mode to preview before committing.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/imagine*
 // @icon         https://grok.com/favicon.ico
@@ -23,6 +23,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
+  const SCRIPT_VERSION = '1.1.0';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -42,9 +43,10 @@
     downloadedCount: 0,
     failedCount: 0,
     unfavoritedCount: 0,
+    dryRunItems: [],     // Items collected during a dry run
     downloadFolder: GM_getValue('downloadFolder', 'grok-imagine'),
     filterType: 'all',   // 'all' | 'images' | 'videos'
-    unfavoriteAfterDownload: GM_getValue('unfavoriteAfterDownload', false),
+    dryRunMode: GM_getValue('dryRunMode', false),
   };
 
   // ─── Styles ───────────────────────────────────────────────────────────────
@@ -53,7 +55,7 @@
       position: fixed;
       bottom: 24px;
       right: 24px;
-      width: 380px;
+      width: 400px;
       max-height: 90vh;
       overflow-y: auto;
       background: rgba(8, 12, 24, 0.97);
@@ -100,17 +102,33 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 16px 18px 12px;
+      padding: 14px 16px 10px;
       border-bottom: 1px solid rgba(255,255,255,0.08);
     }
+    .gid-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
     .gid-title {
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 700;
       letter-spacing: 0.02em;
       background: linear-gradient(90deg, #60a5fa, #a78bfa);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
+    }
+    .gid-version-badge {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #475569;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 4px;
+      padding: 2px 6px;
     }
     .gid-close {
       background: none;
@@ -125,7 +143,7 @@
     }
     .gid-close:hover { color: #e2e8f0; }
 
-    .gid-body { padding: 14px 18px; }
+    .gid-body { padding: 12px 16px; }
 
     .gid-section-label {
       font-size: 10px;
@@ -139,24 +157,24 @@
     .gid-stat-row {
       display: flex;
       gap: 8px;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
     }
     .gid-stat {
       flex: 1;
       background: rgba(255,255,255,0.04);
       border: 1px solid rgba(255,255,255,0.07);
       border-radius: 10px;
-      padding: 10px 12px;
+      padding: 10px 8px;
       text-align: center;
     }
     .gid-stat-value {
-      font-size: 22px;
+      font-size: 20px;
       font-weight: 700;
       color: #60a5fa;
       line-height: 1;
     }
     .gid-stat-label {
-      font-size: 10px;
+      font-size: 9px;
       color: #64748b;
       margin-top: 3px;
       letter-spacing: 0.05em;
@@ -165,12 +183,12 @@
     .gid-filter-row {
       display: flex;
       gap: 6px;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
     }
     .gid-filter-btn {
       flex: 1;
       padding: 7px 0;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 600;
       border-radius: 8px;
       border: 1px solid rgba(255,255,255,0.1);
@@ -190,7 +208,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
     }
     .gid-input-label {
       font-size: 11px;
@@ -210,36 +228,195 @@
     }
     .gid-input:focus { border-color: rgba(59,130,246,0.5); }
 
-    .gid-checkbox-row {
+    /* ── Dry Run Toggle ── */
+    .gid-dryrun-row {
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 16px;
+      justify-content: space-between;
+      background: rgba(245, 158, 11, 0.06);
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 12px;
       cursor: pointer;
+      transition: background 0.15s;
     }
-    .gid-checkbox-row input[type="checkbox"] {
-      width: 15px;
-      height: 15px;
-      accent-color: #3b82f6;
-      cursor: pointer;
+    .gid-dryrun-row:hover { background: rgba(245, 158, 11, 0.1); }
+    .gid-dryrun-row.active {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.45);
     }
-    .gid-checkbox-label {
+    .gid-dryrun-left { display: flex; flex-direction: column; gap: 2px; }
+    .gid-dryrun-label {
       font-size: 12px;
-      color: #94a3b8;
+      font-weight: 700;
+      color: #fbbf24;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .gid-dryrun-desc {
+      font-size: 10px;
+      color: #78716c;
+      line-height: 1.4;
+    }
+    .gid-toggle-switch {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+    .gid-toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .gid-toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: rgba(255,255,255,0.1);
+      border-radius: 99px;
+      transition: background 0.2s;
       cursor: pointer;
-      user-select: none;
+    }
+    .gid-toggle-slider::before {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      left: 3px;
+      top: 3px;
+      background: #94a3b8;
+      border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .gid-toggle-switch input:checked + .gid-toggle-slider {
+      background: rgba(245, 158, 11, 0.4);
+    }
+    .gid-toggle-switch input:checked + .gid-toggle-slider::before {
+      transform: translateX(16px);
+      background: #fbbf24;
+    }
+
+    /* ── Dry Run Results Panel ── */
+    .gid-dryrun-results {
+      display: none;
+      background: rgba(245, 158, 11, 0.05);
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      max-height: 160px;
+      overflow-y: auto;
+    }
+    .gid-dryrun-results.visible { display: block; }
+    .gid-dryrun-results-header {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #fbbf24;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .gid-dryrun-item {
+      font-size: 10px;
+      color: #78716c;
+      padding: 3px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .gid-dryrun-item:last-child { border-bottom: none; }
+    .gid-dryrun-item .type-badge {
+      display: inline-block;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      padding: 1px 4px;
+      border-radius: 3px;
+      margin-right: 5px;
+      text-transform: uppercase;
+    }
+    .gid-dryrun-item .type-badge.img {
+      background: rgba(59,130,246,0.2);
+      color: #60a5fa;
+    }
+    .gid-dryrun-item .type-badge.vid {
+      background: rgba(139,92,246,0.2);
+      color: #a78bfa;
+    }
+    .gid-dryrun-export {
+      margin-top: 8px;
+      width: 100%;
+      padding: 6px 0;
+      font-size: 10px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: 1px solid rgba(245,158,11,0.3);
+      background: rgba(245,158,11,0.08);
+      color: #fbbf24;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .gid-dryrun-export:hover { background: rgba(245,158,11,0.15); }
+
+    .gid-progress-wrap {
+      margin-bottom: 12px;
+      display: none;
+    }
+    .gid-progress-wrap.visible { display: block; }
+    .gid-progress-bar-bg {
+      background: rgba(255,255,255,0.07);
+      border-radius: 99px;
+      height: 6px;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+    .gid-progress-bar {
+      height: 100%;
+      border-radius: 99px;
+      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+      transition: width 0.3s ease;
+      width: 0%;
+    }
+    .gid-progress-bar.dryrun {
+      background: linear-gradient(90deg, #f59e0b, #fbbf24);
+    }
+    .gid-progress-text {
+      font-size: 11px;
+      color: #64748b;
+      text-align: center;
+    }
+
+    .gid-status {
+      font-size: 11px;
+      color: #64748b;
+      text-align: center;
+      min-height: 16px;
+      margin-bottom: 10px;
+      transition: color 0.2s;
+    }
+    .gid-status.success { color: #4ade80; }
+    .gid-status.error { color: #f87171; }
+    .gid-status.warning { color: #fbbf24; }
+    .gid-status.dryrun { color: #fbbf24; }
+
+    .gid-divider {
+      border: none;
+      border-top: 1px solid rgba(255,255,255,0.07);
+      margin: 10px 0;
     }
 
     .gid-btn {
       width: 100%;
-      padding: 11px 16px;
+      padding: 10px 16px;
       border-radius: 10px;
       border: none;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.15s cubic-bezier(0.23, 1, 0.32, 1);
-      margin-bottom: 8px;
+      margin-bottom: 7px;
       letter-spacing: 0.02em;
     }
     .gid-btn:active { transform: scale(0.97); }
@@ -260,9 +437,7 @@
       border: 1px solid rgba(239, 68, 68, 0.3);
       color: #f87171;
     }
-    .gid-btn-danger:not(:disabled):hover {
-      background: rgba(239, 68, 68, 0.2);
-    }
+    .gid-btn-danger:not(:disabled):hover { background: rgba(239, 68, 68, 0.2); }
 
     .gid-btn-secondary {
       background: rgba(255,255,255,0.06);
@@ -279,55 +454,21 @@
       border: 1px solid rgba(245, 158, 11, 0.3);
       color: #fbbf24;
     }
-    .gid-btn-cancel:not(:disabled):hover {
-      background: rgba(245, 158, 11, 0.2);
-    }
+    .gid-btn-cancel:not(:disabled):hover { background: rgba(245, 158, 11, 0.2); }
 
-    .gid-progress-wrap {
-      margin-bottom: 14px;
-      display: none;
+    .gid-btn-dryrun {
+      background: linear-gradient(135deg, #d97706, #f59e0b);
+      color: #1c1917;
+      font-weight: 700;
+      box-shadow: 0 4px 14px rgba(245,158,11,0.3);
     }
-    .gid-progress-wrap.visible { display: block; }
-    .gid-progress-bar-bg {
-      background: rgba(255,255,255,0.07);
-      border-radius: 99px;
-      height: 6px;
-      overflow: hidden;
-      margin-bottom: 6px;
-    }
-    .gid-progress-bar {
-      height: 100%;
-      border-radius: 99px;
-      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
-      transition: width 0.3s ease;
-      width: 0%;
-    }
-    .gid-progress-text {
-      font-size: 11px;
-      color: #64748b;
-      text-align: center;
-    }
-
-    .gid-status {
-      font-size: 11px;
-      color: #64748b;
-      text-align: center;
-      min-height: 16px;
-      margin-bottom: 10px;
-      transition: color 0.2s;
-    }
-    .gid-status.success { color: #4ade80; }
-    .gid-status.error { color: #f87171; }
-    .gid-status.warning { color: #fbbf24; }
-
-    .gid-divider {
-      border: none;
-      border-top: 1px solid rgba(255,255,255,0.07);
-      margin: 12px 0;
+    .gid-btn-dryrun:not(:disabled):hover {
+      box-shadow: 0 6px 20px rgba(245,158,11,0.45);
+      transform: translateY(-1px);
     }
 
     .gid-footer {
-      padding: 10px 18px 14px;
+      padding: 8px 16px 12px;
       border-top: 1px solid rgba(255,255,255,0.06);
       font-size: 10px;
       color: #334155;
@@ -402,7 +543,6 @@
       if (posts.length === 0) break;
 
       for (const post of posts) {
-        // Main post media
         if (post.mediaUrl) {
           const isVideo = post.mediaType === 'MEDIA_POST_TYPE_VIDEO';
           const url = isVideo && post.hdMediaUrl ? post.hdMediaUrl : post.mediaUrl;
@@ -418,7 +558,6 @@
           });
         }
 
-        // Child posts (variations / versions)
         if (post.childPosts && post.childPosts.length > 0) {
           for (const child of post.childPosts) {
             if (!child.mediaUrl) continue;
@@ -446,7 +585,7 @@
       cursor = data.nextCursor || null;
       if (!cursor || posts.length < PAGE_SIZE) break;
 
-      await sleep(150); // polite pacing
+      await sleep(150);
     }
 
     return allMedia;
@@ -489,13 +628,16 @@
     if (el) el.textContent = val;
   }
 
-  function setProgress(pct, label) {
+  function setProgress(pct, label, isDryRun = false) {
     const wrap = document.getElementById('gid-progress-wrap');
     const bar = document.getElementById('gid-progress-bar');
     const text = document.getElementById('gid-progress-text');
     if (!wrap) return;
     wrap.classList.add('visible');
-    if (bar) bar.style.width = `${Math.min(100, pct)}%`;
+    if (bar) {
+      bar.style.width = `${Math.min(100, pct)}%`;
+      bar.className = 'gid-progress-bar' + (isDryRun ? ' dryrun' : '');
+    }
     if (text) text.textContent = label || '';
   }
 
@@ -505,7 +647,7 @@
   }
 
   function setButtonsDisabled(disabled) {
-    ['gid-btn-fetch', 'gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both'].forEach(id => {
+    ['gid-btn-fetch', 'gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.disabled = disabled;
     });
@@ -517,6 +659,81 @@
     updateStat('total', state.posts.length || '—');
     updateStat('downloaded', state.downloadedCount || '—');
     updateStat('unfavorited', state.unfavoritedCount || '—');
+  }
+
+  function updateDryRunToggleUI() {
+    const row = document.getElementById('gid-dryrun-row');
+    const checkbox = document.getElementById('gid-dryrun-checkbox');
+    const actionBtns = document.getElementById('gid-action-btns');
+    const dryRunBtn = document.getElementById('gid-btn-dryrun');
+
+    if (row) row.classList.toggle('active', state.dryRunMode);
+    if (checkbox) checkbox.checked = state.dryRunMode;
+
+    if (state.dryRunMode) {
+      if (actionBtns) actionBtns.style.display = 'none';
+      if (dryRunBtn) dryRunBtn.style.display = 'block';
+    } else {
+      if (actionBtns) actionBtns.style.display = 'block';
+      if (dryRunBtn) dryRunBtn.style.display = 'none';
+      // Hide dry run results if switching off
+      const results = document.getElementById('gid-dryrun-results');
+      if (results) results.classList.remove('visible');
+    }
+  }
+
+  function renderDryRunResults(items) {
+    const container = document.getElementById('gid-dryrun-results');
+    if (!container) return;
+
+    const imgCount = items.filter(i => !i.isVideo).length;
+    const vidCount = items.filter(i => i.isVideo).length;
+
+    container.innerHTML = `
+      <div class="gid-dryrun-results-header">
+        <span>Preview — ${items.length} files</span>
+        <span style="color:#64748b;font-weight:400">${imgCount} img · ${vidCount} vid</span>
+      </div>
+      ${items.slice(0, 50).map(item => `
+        <div class="gid-dryrun-item">
+          <span class="type-badge ${item.isVideo ? 'vid' : 'img'}">${item.isVideo ? 'VID' : 'IMG'}</span>
+          ${buildFilename(item)}
+        </div>
+      `).join('')}
+      ${items.length > 50 ? `<div class="gid-dryrun-item" style="color:#475569;font-style:italic">… and ${items.length - 50} more</div>` : ''}
+      <button class="gid-dryrun-export" id="gid-dryrun-export-btn">⬇ Export file list as .txt</button>
+    `;
+    container.classList.add('visible');
+
+    document.getElementById('gid-dryrun-export-btn').addEventListener('click', () => {
+      exportDryRunList(items);
+    });
+  }
+
+  function exportDryRunList(items) {
+    const lines = [
+      `Grok Imagine Downloader v${SCRIPT_VERSION} — Dry Run Report`,
+      `Generated: ${new Date().toISOString()}`,
+      `Total items: ${items.length} (${items.filter(i=>!i.isVideo).length} images, ${items.filter(i=>i.isVideo).length} videos)`,
+      `Download folder: ${state.downloadFolder}/`,
+      `Filter: ${state.filterType}`,
+      '',
+      '─── File List ───────────────────────────────────────────',
+      ...items.map((item, i) =>
+        `${String(i+1).padStart(4, '0')}  [${item.isVideo ? 'VIDEO' : 'IMAGE'}]  ${state.downloadFolder}/${buildFilename(item)}`
+      ),
+      '',
+      '─── URLs ────────────────────────────────────────────────',
+      ...items.map(item => item.url),
+    ];
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `grok-dryrun-${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   // ─── Core Operations ──────────────────────────────────────────────────────
@@ -549,6 +766,45 @@
     return state.posts;
   }
 
+  // ── Dry Run ───────────────────────────────────────────────────────────────
+  async function doDryRun() {
+    const items = getFilteredPosts();
+    if (items.length === 0) {
+      setStatus('No items to preview. Fetch your library first.', 'warning');
+      return;
+    }
+
+    state.cancelRequested = false;
+    setButtonsDisabled(true);
+    setProgress(0, `Scanning 0 / ${items.length}`, true);
+    setStatus(`Dry Run: scanning ${items.length} items…`, 'dryrun');
+
+    const dryRunItems = [];
+    for (let i = 0; i < items.length; i++) {
+      if (state.cancelRequested) break;
+      dryRunItems.push(items[i]);
+      const pct = ((i + 1) / items.length) * 100;
+      setProgress(pct, `Scanning ${i + 1} / ${items.length}`, true);
+      // Small delay so the UI updates visibly
+      if (i % 20 === 0) await sleep(10);
+    }
+
+    state.dryRunItems = dryRunItems;
+    const imgCount = dryRunItems.filter(i => !i.isVideo).length;
+    const vidCount = dryRunItems.filter(i => i.isVideo).length;
+
+    setStatus(
+      `Dry Run complete: ${dryRunItems.length} files (${imgCount} images, ${vidCount} videos). No files were downloaded or modified.`,
+      'dryrun'
+    );
+    setProgress(100, `${dryRunItems.length} files identified`, true);
+    renderDryRunResults(dryRunItems);
+
+    setButtonsDisabled(false);
+    setTimeout(hideProgress, 3000);
+  }
+
+  // ── Download ──────────────────────────────────────────────────────────────
   async function doDownload() {
     if (state.isDownloading) return;
     const items = getFilteredPosts();
@@ -571,15 +827,13 @@
         break;
       }
 
-      const item = items[i];
-      const ok = await downloadItem(item);
+      const ok = await downloadItem(items[i]);
       if (ok) state.downloadedCount++;
       else state.failedCount++;
 
       const pct = ((i + 1) / items.length) * 100;
       setProgress(pct, `${i + 1} / ${items.length} — ${state.downloadedCount} saved, ${state.failedCount} failed`);
       updateStat('downloaded', state.downloadedCount);
-
       await sleep(DOWNLOAD_DELAY_MS);
     }
 
@@ -601,10 +855,9 @@
       return;
     }
 
-    // Confirm
     if (!postsOverride) {
       const confirmed = confirm(
-        `⚠️ Unfavorite ${items.length} items?\n\nThis will remove them from your Grok Imagine favorites. They may still be publicly accessible via direct URL.\n\nProceed?`
+        `⚠️ Unfavorite ${items.length} items?\n\nThis will remove them from your Grok Imagine favorites.\n\nProceed?`
       );
       if (!confirmed) return;
     }
@@ -616,7 +869,6 @@
     setProgress(0, `0 / ${items.length}`);
     setStatus(`Unfavoriting ${items.length} items…`);
 
-    // Deduplicate by postId (unfavorite the parent post, not each child)
     const seenPostIds = new Set();
     const uniquePosts = items.filter(item => {
       if (seenPostIds.has(item.postId)) return false;
@@ -630,14 +882,12 @@
         break;
       }
 
-      const item = uniquePosts[i];
-      const ok = await unlikePost(item.postId);
+      const ok = await unlikePost(uniquePosts[i].postId);
       if (ok) state.unfavoritedCount++;
 
       const pct = ((i + 1) / uniquePosts.length) * 100;
       setProgress(pct, `${i + 1} / ${uniquePosts.length} — ${state.unfavoritedCount} removed`);
       updateStat('unfavorited', state.unfavoritedCount);
-
       await sleep(UNFAVORITE_DELAY_MS);
     }
 
@@ -677,8 +927,7 @@
       const ok = await downloadItem(items[i]);
       if (ok) state.downloadedCount++;
       else state.failedCount++;
-      const pct = ((i + 1) / items.length) * 50; // first 50% for download
-      setProgress(pct, `Downloading ${i + 1} / ${items.length}`);
+      setProgress(((i + 1) / items.length) * 50, `Downloading ${i + 1} / ${items.length}`);
       updateStat('downloaded', state.downloadedCount);
       await sleep(DOWNLOAD_DELAY_MS);
     }
@@ -707,17 +956,14 @@
       if (state.cancelRequested) break;
       const ok = await unlikePost(uniquePosts[i].postId);
       if (ok) state.unfavoritedCount++;
-      const pct = 50 + ((i + 1) / uniquePosts.length) * 50;
-      setProgress(pct, `Unfavoriting ${i + 1} / ${uniquePosts.length}`);
+      setProgress(50 + ((i + 1) / uniquePosts.length) * 50, `Unfavoriting ${i + 1} / ${uniquePosts.length}`);
       updateStat('unfavorited', state.unfavoritedCount);
       await sleep(UNFAVORITE_DELAY_MS);
     }
 
     state.isUnfavoriting = false;
     setButtonsDisabled(false);
-
-    const msg = `All done! ${state.downloadedCount} downloaded, ${state.unfavoritedCount} unfavorited.`;
-    setStatus(msg, 'success');
+    setStatus(`All done! ${state.downloadedCount} downloaded, ${state.unfavoritedCount} unfavorited.`, 'success');
     setTimeout(hideProgress, 4000);
   }
 
@@ -727,7 +973,10 @@
     panel.id = 'gid-panel';
     panel.innerHTML = `
       <div class="gid-header">
-        <span class="gid-title">⬇ Grok Imagine Downloader</span>
+        <div class="gid-title-row">
+          <span class="gid-title">⬇ Grok Imagine Downloader</span>
+          <span class="gid-version-badge">v${SCRIPT_VERSION}</span>
+        </div>
         <button class="gid-close" id="gid-close-btn" title="Minimize">✕</button>
       </div>
       <div class="gid-body">
@@ -751,8 +1000,8 @@
         <div class="gid-section-label">Filter</div>
         <div class="gid-filter-row">
           <button class="gid-filter-btn active" id="gid-filter-all">All</button>
-          <button class="gid-filter-btn" id="gid-filter-images">Images Only</button>
-          <button class="gid-filter-btn" id="gid-filter-videos">Videos Only</button>
+          <button class="gid-filter-btn" id="gid-filter-images">Images</button>
+          <button class="gid-filter-btn" id="gid-filter-videos">Videos</button>
         </div>
 
         <div class="gid-section-label">Download Folder</div>
@@ -760,6 +1009,21 @@
           <span class="gid-input-label">Subfolder:</span>
           <input class="gid-input" id="gid-folder-input" type="text" value="${state.downloadFolder}" placeholder="grok-imagine" />
         </div>
+
+        <!-- Dry Run Toggle -->
+        <div class="gid-dryrun-row ${state.dryRunMode ? 'active' : ''}" id="gid-dryrun-row">
+          <div class="gid-dryrun-left">
+            <div class="gid-dryrun-label">🔍 Dry Run Mode</div>
+            <div class="gid-dryrun-desc">Preview what would be downloaded — no files saved, nothing unfavorited.</div>
+          </div>
+          <label class="gid-toggle-switch" onclick="event.stopPropagation()">
+            <input type="checkbox" id="gid-dryrun-checkbox" ${state.dryRunMode ? 'checked' : ''} />
+            <span class="gid-toggle-slider"></span>
+          </label>
+        </div>
+
+        <!-- Dry Run Results -->
+        <div class="gid-dryrun-results" id="gid-dryrun-results"></div>
 
         <div id="gid-progress-wrap" class="gid-progress-wrap">
           <div class="gid-progress-bar-bg">
@@ -774,16 +1038,22 @@
 
         <hr class="gid-divider">
 
-        <button class="gid-btn gid-btn-primary" id="gid-btn-download" disabled>⬇ Download All</button>
-        <button class="gid-btn gid-btn-danger" id="gid-btn-unfavorite" disabled>🗑 Unfavorite All (Remove from Server)</button>
-        <button class="gid-btn gid-btn-primary" id="gid-btn-both" disabled style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">⬇🗑 Download + Unfavorite All</button>
+        <!-- Normal action buttons (hidden in dry run mode) -->
+        <div id="gid-action-btns" style="${state.dryRunMode ? 'display:none' : ''}">
+          <button class="gid-btn gid-btn-primary" id="gid-btn-download" disabled>⬇ Download All</button>
+          <button class="gid-btn gid-btn-danger" id="gid-btn-unfavorite" disabled>🗑 Unfavorite All (Remove from Server)</button>
+          <button class="gid-btn gid-btn-primary" id="gid-btn-both" disabled style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">⬇🗑 Download + Unfavorite All</button>
+        </div>
+
+        <!-- Dry Run button (shown only in dry run mode) -->
+        <button class="gid-btn gid-btn-dryrun" id="gid-btn-dryrun" disabled style="${state.dryRunMode ? '' : 'display:none'}">🔍 Run Preview Scan</button>
 
         <hr class="gid-divider">
 
         <button class="gid-btn gid-btn-cancel" id="gid-btn-cancel" disabled>✕ Cancel Operation</button>
       </div>
       <div class="gid-footer">
-        Unofficial tool · Use at your own risk · <a href="https://grok.com/imagine/favorites" target="_blank">Open Favorites</a>
+        v${SCRIPT_VERSION} · Unofficial tool · <a href="https://grok.com/imagine/favorites" target="_blank">Open Favorites</a>
       </div>
     `;
     return panel;
@@ -798,7 +1068,6 @@
   }
 
   function attachEvents(panel) {
-    // Close / toggle
     document.getElementById('gid-close-btn').addEventListener('click', () => {
       panel.classList.add('gid-hidden');
     });
@@ -806,7 +1075,6 @@
       panel.classList.toggle('gid-hidden');
     });
 
-    // Folder input
     document.getElementById('gid-folder-input').addEventListener('input', e => {
       state.downloadFolder = e.target.value.trim() || 'grok-imagine';
       GM_setValue('downloadFolder', state.downloadFolder);
@@ -823,11 +1091,27 @@
       });
     });
 
-    // Action buttons
+    // Dry Run toggle — clicking the row or the checkbox both work
+    const dryRunRow = document.getElementById('gid-dryrun-row');
+    const dryRunCheckbox = document.getElementById('gid-dryrun-checkbox');
+
+    dryRunRow.addEventListener('click', (e) => {
+      if (e.target === dryRunCheckbox) return; // checkbox handles itself
+      dryRunCheckbox.checked = !dryRunCheckbox.checked;
+      state.dryRunMode = dryRunCheckbox.checked;
+      GM_setValue('dryRunMode', state.dryRunMode);
+      updateDryRunToggleUI();
+    });
+    dryRunCheckbox.addEventListener('change', () => {
+      state.dryRunMode = dryRunCheckbox.checked;
+      GM_setValue('dryRunMode', state.dryRunMode);
+      updateDryRunToggleUI();
+    });
+
+    // Fetch
     document.getElementById('gid-btn-fetch').addEventListener('click', async () => {
       await doFetch();
-      // Enable action buttons after fetch
-      ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both'].forEach(id => {
+      ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = state.posts.length === 0;
       });
@@ -836,6 +1120,7 @@
     document.getElementById('gid-btn-download').addEventListener('click', doDownload);
     document.getElementById('gid-btn-unfavorite').addEventListener('click', () => doUnfavorite());
     document.getElementById('gid-btn-both').addEventListener('click', doDownloadAndUnfavorite);
+    document.getElementById('gid-btn-dryrun').addEventListener('click', doDryRun);
 
     document.getElementById('gid-btn-cancel').addEventListener('click', () => {
       state.cancelRequested = true;
@@ -845,7 +1130,7 @@
 
   // ─── Init ─────────────────────────────────────────────────────────────────
   function init() {
-    if (document.getElementById('gid-panel')) return; // already injected
+    if (document.getElementById('gid-panel')) return;
 
     const panel = buildPanel();
     const toggleBtn = buildToggleBtn();
@@ -857,11 +1142,9 @@
     refreshUI();
   }
 
-  // Wait for DOM to be ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
-    // Small delay to let Grok's React app mount
     setTimeout(init, 1500);
   }
 

@@ -12,6 +12,35 @@ import { motion } from "framer-motion";
 const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/hero-bg-3WyWRMW5WZoB6TWmYp9h57.webp";
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
+const SCRIPT_VERSION = "1.1.0";
+
+const changelog = [
+  {
+    version: "1.1.0",
+    date: "May 2026",
+    tag: "latest",
+    tagColor: "#3b82f6",
+    changes: [
+      { type: "new", text: "Dry Run mode — preview every file that would be downloaded/unfavorited before committing, with an exportable .txt file list." },
+      { type: "new", text: "Version badge displayed in the in-page panel header." },
+      { type: "improve", text: "Dry Run progress bar uses distinct amber colour to distinguish from live operations." },
+      { type: "improve", text: "Panel width slightly increased for better readability of long filenames in dry run results." },
+    ],
+  },
+  {
+    version: "1.0.0",
+    date: "May 2026",
+    tag: "initial",
+    tagColor: "#475569",
+    changes: [
+      { type: "new", text: "Initial release with bulk download, unfavorite, and combined download+unfavorite flows." },
+      { type: "new", text: "Paginated library fetch with full child post (variation) support." },
+      { type: "new", text: "Filter by images only, videos only, or all media." },
+      { type: "new", text: "Customisable download subfolder with persistent preference." },
+      { type: "new", text: "Cancel button to stop any in-progress operation cleanly." },
+    ],
+  },
+];
 
 const fadeUp = {
   hidden: { opacity: 0, y: 24 },
@@ -52,6 +81,11 @@ const features = [
     icon: "📦",
     title: "All Versions",
     desc: "Fetches child posts (variations) for each creation, ensuring every generated version is captured — not just the latest.",
+  },
+  {
+    icon: "🔍",
+    title: "Dry Run Mode",
+    desc: "Preview exactly which files would be downloaded or unfavorited — with counts, filenames, and an exportable .txt list — before a single file is touched.",
   },
 ];
 
@@ -167,6 +201,21 @@ export default function Home() {
               }}
             >
               Grok Imagine Downloader
+            </span>
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase" as const,
+                color: "#475569",
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: 4,
+                padding: "2px 6px",
+              }}
+            >
+              v{SCRIPT_VERSION}
             </span>
           </div>
           <a
@@ -819,6 +868,128 @@ export default function Home() {
                       {faq.a}
                     </div>
                   )}
+                </motion.div>
+              ))}
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* ── Changelog ─────────────────────────────────────────────────── */}
+      <section style={{ padding: "80px 0", background: "rgba(255,255,255,0.015)" }}>
+        <div className="container" style={{ maxWidth: 720 }}>
+          <motion.div
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true, amount: 0.01 }}
+          >
+            <motion.div variants={fadeUp} custom={0} style={{ marginBottom: 40 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase" as const,
+                  color: "#3b82f6",
+                  marginBottom: 12,
+                }}
+              >
+                Changelog
+              </div>
+              <h2
+                style={{
+                  fontFamily: "'Outfit', system-ui, sans-serif",
+                  fontSize: "clamp(24px, 3.5vw, 36px)",
+                  fontWeight: 700,
+                  letterSpacing: "-0.02em",
+                }}
+              >
+                What's new
+              </h2>
+            </motion.div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {changelog.map((release, i) => (
+                <motion.div
+                  key={release.version}
+                  variants={fadeUp}
+                  custom={i + 1}
+                  style={{
+                    background: "rgba(255,255,255,0.025)",
+                    border: `1px solid ${i === 0 ? "rgba(59,130,246,0.25)" : "rgba(255,255,255,0.07)"}`,
+                    borderRadius: 14,
+                    overflow: "hidden",
+                  }}
+                >
+                  {/* Release header */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "16px 20px",
+                      borderBottom: "1px solid rgba(255,255,255,0.06)",
+                      background: i === 0 ? "rgba(59,130,246,0.04)" : "transparent",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontFamily: "'Outfit', system-ui, sans-serif",
+                        fontSize: 17,
+                        fontWeight: 700,
+                        color: "#e2e8f0",
+                      }}
+                    >
+                      v{release.version}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase" as const,
+                        color: release.tagColor,
+                        background: `${release.tagColor}18`,
+                        border: `1px solid ${release.tagColor}40`,
+                        borderRadius: 4,
+                        padding: "2px 7px",
+                      }}
+                    >
+                      {release.tag}
+                    </span>
+                    <span style={{ marginLeft: "auto", fontSize: 12, color: "#475569" }}>
+                      {release.date}
+                    </span>
+                  </div>
+
+                  {/* Changes list */}
+                  <div style={{ padding: "14px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
+                    {release.changes.map((change, j) => (
+                      <div key={j} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                        <span
+                          style={{
+                            fontSize: 9,
+                            fontWeight: 700,
+                            letterSpacing: "0.08em",
+                            textTransform: "uppercase" as const,
+                            padding: "2px 6px",
+                            borderRadius: 4,
+                            flexShrink: 0,
+                            marginTop: 2,
+                            ...(change.type === "new"
+                              ? { background: "rgba(74,222,128,0.12)", color: "#4ade80", border: "1px solid rgba(74,222,128,0.25)" }
+                              : { background: "rgba(59,130,246,0.12)", color: "#60a5fa", border: "1px solid rgba(59,130,246,0.25)" }
+                            ),
+                          }}
+                        >
+                          {change.type === "new" ? "new" : "improved"}
+                        </span>
+                        <span style={{ fontSize: 13, color: "#94a3b8", lineHeight: 1.6 }}>
+                          {change.text}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </motion.div>
               ))}
             </div>
