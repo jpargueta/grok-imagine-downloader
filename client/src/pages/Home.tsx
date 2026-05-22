@@ -12,14 +12,26 @@ import { motion } from "framer-motion";
 const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/hero-bg-3WyWRMW5WZoB6TWmYp9h57.webp";
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.1.0";
+const SCRIPT_VERSION = "1.2.0";
 
 const changelog = [
   {
-    version: "1.1.0",
+    version: "1.2.0",
     date: "May 2026",
     tag: "latest",
-    tagColor: "#3b82f6",
+    tagColor: "#6366f1",
+    changes: [
+      { type: "new", text: "Visual thumbnail picker — browse a full-screen grid of all your creations, search by prompt, filter by type, and select individual items before acting." },
+      { type: "new", text: "Selection mode — once items are picked, all action buttons (Download, Unfavorite, Download+Unfavorite) operate only on the selection." },
+      { type: "new", text: "Selection banner in the panel shows the active count and a one-click Clear button to return to full-library mode." },
+      { type: "improve", text: "Thumbnail grid lazy-loads images and shows a placeholder for items with broken URLs." },
+    ],
+  },
+  {
+    version: "1.1.0",
+    date: "May 2026",
+    tag: "previous",
+    tagColor: "#475569",
     changes: [
       { type: "new", text: "Dry Run mode — preview every file that would be downloaded/unfavorited before committing, with an exportable .txt file list." },
       { type: "new", text: "Version badge displayed in the in-page panel header." },
@@ -31,7 +43,7 @@ const changelog = [
     version: "1.0.0",
     date: "May 2026",
     tag: "initial",
-    tagColor: "#475569",
+    tagColor: "#334155",
     changes: [
       { type: "new", text: "Initial release with bulk download, unfavorite, and combined download+unfavorite flows." },
       { type: "new", text: "Paginated library fetch with full child post (variation) support." },
@@ -86,6 +98,11 @@ const features = [
     icon: "🔍",
     title: "Dry Run Mode",
     desc: "Preview exactly which files would be downloaded or unfavorited — with counts, filenames, and an exportable .txt list — before a single file is touched.",
+  },
+  {
+    icon: "🖼️",
+    title: "Visual Subset Picker",
+    desc: "Open a full-screen thumbnail grid, search by prompt, filter by type, and hand-pick exactly which items to download or unfavorite — no need to act on your entire library.",
   },
 ];
 

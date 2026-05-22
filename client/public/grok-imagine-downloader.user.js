@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.1.0
-// @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite them to remove them from the server. Includes Dry Run mode to preview before committing.
+// @version      1.2.0
+// @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite them. Includes Dry Run mode and a visual thumbnail picker to select a subset before acting.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/imagine*
 // @icon         https://grok.com/favicon.ico
@@ -23,34 +23,36 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.1.0';
+  const SCRIPT_VERSION = '1.2.0';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
   };
   const PAGE_SIZE = 40;
-  const DOWNLOAD_DELAY_MS = 350;   // ~3 downloads/sec to avoid browser limits
-  const UNFAVORITE_DELAY_MS = 200; // 5 unfavorites/sec
+  const DOWNLOAD_DELAY_MS = 350;
+  const UNFAVORITE_DELAY_MS = 200;
 
   // ─── State ────────────────────────────────────────────────────────────────
   let state = {
-    posts: [],           // All fetched posts (flat list of media items)
+    posts: [],
+    selectedIds: new Set(),   // IDs of items selected in picker
+    useSelection: false,      // true = operate on selectedIds, false = operate on all filtered
     isFetching: false,
     isDownloading: false,
     isUnfavoriting: false,
     cancelRequested: false,
-    totalFetched: 0,
     downloadedCount: 0,
     failedCount: 0,
     unfavoritedCount: 0,
-    dryRunItems: [],     // Items collected during a dry run
+    dryRunItems: [],
     downloadFolder: GM_getValue('downloadFolder', 'grok-imagine'),
-    filterType: 'all',   // 'all' | 'images' | 'videos'
+    filterType: 'all',
     dryRunMode: GM_getValue('dryRunMode', false),
   };
 
   // ─── Styles ───────────────────────────────────────────────────────────────
   GM_addStyle(`
+    /* ── Panel ── */
     #gid-panel {
       position: fixed;
       bottom: 24px;
@@ -105,11 +107,7 @@
       padding: 14px 16px 10px;
       border-bottom: 1px solid rgba(255,255,255,0.08);
     }
-    .gid-title-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
+    .gid-title-row { display: flex; align-items: center; gap: 8px; }
     .gid-title {
       font-size: 14px;
       font-weight: 700;
@@ -154,11 +152,7 @@
       margin-bottom: 8px;
     }
 
-    .gid-stat-row {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
+    .gid-stat-row { display: flex; gap: 8px; margin-bottom: 12px; }
     .gid-stat {
       flex: 1;
       background: rgba(255,255,255,0.04);
@@ -167,24 +161,10 @@
       padding: 10px 8px;
       text-align: center;
     }
-    .gid-stat-value {
-      font-size: 20px;
-      font-weight: 700;
-      color: #60a5fa;
-      line-height: 1;
-    }
-    .gid-stat-label {
-      font-size: 9px;
-      color: #64748b;
-      margin-top: 3px;
-      letter-spacing: 0.05em;
-    }
+    .gid-stat-value { font-size: 20px; font-weight: 700; color: #60a5fa; line-height: 1; }
+    .gid-stat-label { font-size: 9px; color: #64748b; margin-top: 3px; letter-spacing: 0.05em; }
 
-    .gid-filter-row {
-      display: flex;
-      gap: 6px;
-      margin-bottom: 12px;
-    }
+    .gid-filter-row { display: flex; gap: 6px; margin-bottom: 12px; }
     .gid-filter-btn {
       flex: 1;
       padding: 7px 0;
@@ -204,17 +184,8 @@
       color: #60a5fa;
     }
 
-    .gid-input-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    .gid-input-label {
-      font-size: 11px;
-      color: #64748b;
-      white-space: nowrap;
-    }
+    .gid-input-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .gid-input-label { font-size: 11px; color: #64748b; white-space: nowrap; }
     .gid-input {
       flex: 1;
       background: rgba(255,255,255,0.06);
@@ -227,6 +198,38 @@
       transition: border-color 0.15s;
     }
     .gid-input:focus { border-color: rgba(59,130,246,0.5); }
+
+    /* ── Selection Banner ── */
+    .gid-selection-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 10px;
+      padding: 9px 12px;
+      margin-bottom: 12px;
+    }
+    .gid-selection-banner.visible { display: flex; }
+    .gid-selection-banner-left { display: flex; flex-direction: column; gap: 2px; }
+    .gid-selection-count {
+      font-size: 12px;
+      font-weight: 700;
+      color: #a5b4fc;
+    }
+    .gid-selection-desc { font-size: 10px; color: #475569; }
+    .gid-selection-clear {
+      font-size: 10px;
+      font-weight: 600;
+      color: #6366f1;
+      background: none;
+      border: 1px solid rgba(99,102,241,0.3);
+      border-radius: 6px;
+      padding: 4px 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .gid-selection-clear:hover { background: rgba(99,102,241,0.15); }
 
     /* ── Dry Run Toggle ── */
     .gid-dryrun-row {
@@ -247,25 +250,9 @@
       border-color: rgba(245, 158, 11, 0.45);
     }
     .gid-dryrun-left { display: flex; flex-direction: column; gap: 2px; }
-    .gid-dryrun-label {
-      font-size: 12px;
-      font-weight: 700;
-      color: #fbbf24;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-    }
-    .gid-dryrun-desc {
-      font-size: 10px;
-      color: #78716c;
-      line-height: 1.4;
-    }
-    .gid-toggle-switch {
-      position: relative;
-      width: 36px;
-      height: 20px;
-      flex-shrink: 0;
-    }
+    .gid-dryrun-label { font-size: 12px; font-weight: 700; color: #fbbf24; display: flex; align-items: center; gap: 5px; }
+    .gid-dryrun-desc { font-size: 10px; color: #78716c; line-height: 1.4; }
+    .gid-toggle-switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
     .gid-toggle-switch input { opacity: 0; width: 0; height: 0; }
     .gid-toggle-slider {
       position: absolute;
@@ -286,15 +273,10 @@
       border-radius: 50%;
       transition: transform 0.2s, background 0.2s;
     }
-    .gid-toggle-switch input:checked + .gid-toggle-slider {
-      background: rgba(245, 158, 11, 0.4);
-    }
-    .gid-toggle-switch input:checked + .gid-toggle-slider::before {
-      transform: translateX(16px);
-      background: #fbbf24;
-    }
+    .gid-toggle-switch input:checked + .gid-toggle-slider { background: rgba(245, 158, 11, 0.4); }
+    .gid-toggle-switch input:checked + .gid-toggle-slider::before { transform: translateX(16px); background: #fbbf24; }
 
-    /* ── Dry Run Results Panel ── */
+    /* ── Dry Run Results ── */
     .gid-dryrun-results {
       display: none;
       background: rgba(245, 158, 11, 0.05);
@@ -337,14 +319,8 @@
       margin-right: 5px;
       text-transform: uppercase;
     }
-    .gid-dryrun-item .type-badge.img {
-      background: rgba(59,130,246,0.2);
-      color: #60a5fa;
-    }
-    .gid-dryrun-item .type-badge.vid {
-      background: rgba(139,92,246,0.2);
-      color: #a78bfa;
-    }
+    .gid-dryrun-item .type-badge.img { background: rgba(59,130,246,0.2); color: #60a5fa; }
+    .gid-dryrun-item .type-badge.vid { background: rgba(139,92,246,0.2); color: #a78bfa; }
     .gid-dryrun-export {
       margin-top: 8px;
       width: 100%;
@@ -360,10 +336,8 @@
     }
     .gid-dryrun-export:hover { background: rgba(245,158,11,0.15); }
 
-    .gid-progress-wrap {
-      margin-bottom: 12px;
-      display: none;
-    }
+    /* ── Progress ── */
+    .gid-progress-wrap { margin-bottom: 12px; display: none; }
     .gid-progress-wrap.visible { display: block; }
     .gid-progress-bar-bg {
       background: rgba(255,255,255,0.07);
@@ -379,14 +353,8 @@
       transition: width 0.3s ease;
       width: 0%;
     }
-    .gid-progress-bar.dryrun {
-      background: linear-gradient(90deg, #f59e0b, #fbbf24);
-    }
-    .gid-progress-text {
-      font-size: 11px;
-      color: #64748b;
-      text-align: center;
-    }
+    .gid-progress-bar.dryrun { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .gid-progress-text { font-size: 11px; color: #64748b; text-align: center; }
 
     .gid-status {
       font-size: 11px;
@@ -401,11 +369,7 @@
     .gid-status.warning { color: #fbbf24; }
     .gid-status.dryrun { color: #fbbf24; }
 
-    .gid-divider {
-      border: none;
-      border-top: 1px solid rgba(255,255,255,0.07);
-      margin: 10px 0;
-    }
+    .gid-divider { border: none; border-top: 1px solid rgba(255,255,255,0.07); margin: 10px 0; }
 
     .gid-btn {
       width: 100%;
@@ -431,31 +395,24 @@
       box-shadow: 0 6px 20px rgba(59,130,246,0.45);
       transform: translateY(-1px);
     }
-
     .gid-btn-danger {
       background: rgba(239, 68, 68, 0.12);
       border: 1px solid rgba(239, 68, 68, 0.3);
       color: #f87171;
     }
     .gid-btn-danger:not(:disabled):hover { background: rgba(239, 68, 68, 0.2); }
-
     .gid-btn-secondary {
       background: rgba(255,255,255,0.06);
       border: 1px solid rgba(255,255,255,0.1);
       color: #94a3b8;
     }
-    .gid-btn-secondary:not(:disabled):hover {
-      background: rgba(255,255,255,0.1);
-      color: #e2e8f0;
-    }
-
+    .gid-btn-secondary:not(:disabled):hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
     .gid-btn-cancel {
       background: rgba(245, 158, 11, 0.12);
       border: 1px solid rgba(245, 158, 11, 0.3);
       color: #fbbf24;
     }
     .gid-btn-cancel:not(:disabled):hover { background: rgba(245, 158, 11, 0.2); }
-
     .gid-btn-dryrun {
       background: linear-gradient(135deg, #d97706, #f59e0b);
       color: #1c1917;
@@ -466,6 +423,12 @@
       box-shadow: 0 6px 20px rgba(245,158,11,0.45);
       transform: translateY(-1px);
     }
+    .gid-btn-picker {
+      background: rgba(99,102,241,0.12);
+      border: 1px solid rgba(99,102,241,0.35);
+      color: #a5b4fc;
+    }
+    .gid-btn-picker:not(:disabled):hover { background: rgba(99,102,241,0.2); }
 
     .gid-footer {
       padding: 8px 16px 12px;
@@ -476,12 +439,250 @@
     }
     .gid-footer a { color: #3b82f6; text-decoration: none; }
     .gid-footer a:hover { text-decoration: underline; }
+
+    /* ── Picker Modal ── */
+    #gid-picker-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(4, 6, 14, 0.92);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      z-index: 9999999;
+      display: flex;
+      flex-direction: column;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    #gid-picker-overlay.visible {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    #gid-picker-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      background: rgba(8,12,24,0.8);
+      flex-shrink: 0;
+    }
+    #gid-picker-title {
+      font-family: 'Outfit', system-ui, sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      background: linear-gradient(90deg, #60a5fa, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      flex: 1;
+    }
+    #gid-picker-count {
+      font-size: 12px;
+      color: #64748b;
+    }
+    #gid-picker-count span {
+      color: #a5b4fc;
+      font-weight: 700;
+    }
+
+    .gid-picker-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      background: rgba(8,12,24,0.6);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .gid-picker-toolbar-btn {
+      padding: 6px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: 7px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.05);
+      color: #94a3b8;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .gid-picker-toolbar-btn:hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
+    .gid-picker-toolbar-btn.active {
+      background: rgba(59,130,246,0.2);
+      border-color: rgba(59,130,246,0.5);
+      color: #60a5fa;
+    }
+    .gid-picker-search {
+      flex: 1;
+      min-width: 160px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 7px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: #e2e8f0;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .gid-picker-search:focus { border-color: rgba(59,130,246,0.5); }
+    .gid-picker-search::placeholder { color: #334155; }
+
+    #gid-picker-grid {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 10px;
+      align-content: start;
+    }
+
+    .gid-thumb {
+      position: relative;
+      border-radius: 10px;
+      overflow: hidden;
+      aspect-ratio: 1;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+      background: rgba(255,255,255,0.04);
+    }
+    .gid-thumb:hover { transform: scale(1.02); box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+    .gid-thumb.selected {
+      border-color: #6366f1;
+      box-shadow: 0 0 0 1px #6366f1, 0 4px 20px rgba(99,102,241,0.3);
+    }
+    .gid-thumb img, .gid-thumb video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .gid-thumb-check {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: rgba(8,12,24,0.7);
+      border: 2px solid rgba(255,255,255,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+    .gid-thumb.selected .gid-thumb-check {
+      background: #6366f1;
+      border-color: #6366f1;
+    }
+    .gid-thumb-check::after {
+      content: '';
+      display: none;
+      width: 5px;
+      height: 9px;
+      border: 2px solid white;
+      border-top: none;
+      border-left: none;
+      transform: rotate(45deg) translateY(-1px);
+    }
+    .gid-thumb.selected .gid-thumb-check::after { display: block; }
+    .gid-thumb-type {
+      position: absolute;
+      bottom: 5px;
+      left: 5px;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: rgba(0,0,0,0.6);
+    }
+    .gid-thumb-type.img { color: #60a5fa; }
+    .gid-thumb-type.vid { color: #a78bfa; }
+    .gid-thumb-prompt {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 20px 6px 6px;
+      font-size: 9px;
+      color: rgba(255,255,255,0.7);
+      background: linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 100%);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .gid-thumb:hover .gid-thumb-prompt { opacity: 1; }
+
+    .gid-thumb-placeholder {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      background: rgba(255,255,255,0.03);
+    }
+
+    #gid-picker-footer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 20px;
+      border-top: 1px solid rgba(255,255,255,0.07);
+      background: rgba(8,12,24,0.8);
+      flex-shrink: 0;
+    }
+    #gid-picker-confirm {
+      flex: 1;
+      padding: 11px 20px;
+      border-radius: 10px;
+      border: none;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: white;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+      box-shadow: 0 4px 14px rgba(99,102,241,0.35);
+    }
+    #gid-picker-confirm:hover {
+      box-shadow: 0 6px 20px rgba(99,102,241,0.5);
+      transform: translateY(-1px);
+    }
+    #gid-picker-confirm:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+    #gid-picker-cancel {
+      padding: 11px 18px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.05);
+      color: #94a3b8;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    #gid-picker-cancel:hover { background: rgba(255,255,255,0.1); color: #e2e8f0; }
+
+    #gid-picker-empty {
+      display: none;
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 60px 20px;
+      color: #334155;
+      font-size: 14px;
+    }
+    #gid-picker-empty.visible { display: block; }
   `);
 
   // ─── Utility ──────────────────────────────────────────────────────────────
-  function sleep(ms) {
-    return new Promise(r => setTimeout(r, ms));
-  }
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   function sanitizeFilename(str) {
     return (str || '').replace(/[/\\?%*:|"<>]/g, '_').replace(/\s+/g, '_').slice(0, 120);
@@ -496,7 +697,7 @@
     return `${time}_${item.id}${prompt}.${ext}`;
   }
 
-  // ─── API Calls ────────────────────────────────────────────────────────────
+  // ─── API ──────────────────────────────────────────────────────────────────
   function apiPost(url, body) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -519,25 +720,17 @@
     const allMedia = [];
     let cursor = null;
     let page = 0;
-
     setStatus('Fetching your library…');
     updateStat('total', '…');
 
     while (true) {
       if (state.cancelRequested) break;
-
-      const body = {
-        limit: PAGE_SIZE,
-        filter: { source: 'MEDIA_POST_SOURCE_LIKED', safeForWork: false },
-      };
+      const body = { limit: PAGE_SIZE, filter: { source: 'MEDIA_POST_SOURCE_LIKED', safeForWork: false } };
       if (cursor) body.cursor = String(cursor);
 
       let data;
-      try {
-        data = await apiPost(API.LIST, body);
-      } catch (e) {
-        throw new Error(`Failed to fetch page ${page + 1}: ${e.message}`);
-      }
+      try { data = await apiPost(API.LIST, body); }
+      catch (e) { throw new Error(`Failed to fetch page ${page + 1}: ${e.message}`); }
 
       const posts = data.posts || [];
       if (posts.length === 0) break;
@@ -545,49 +738,42 @@
       for (const post of posts) {
         if (post.mediaUrl) {
           const isVideo = post.mediaType === 'MEDIA_POST_TYPE_VIDEO';
-          const url = isVideo && post.hdMediaUrl ? post.hdMediaUrl : post.mediaUrl;
           allMedia.push({
             id: post.id,
             postId: post.id,
-            url,
+            url: isVideo && post.hdMediaUrl ? post.hdMediaUrl : post.mediaUrl,
+            thumbUrl: post.mediaUrl,
             isVideo,
             mimeType: post.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
             prompt: post.originalPrompt || post.prompt || '',
             createTime: post.createTime || '',
-            modelName: post.modelName || '',
           });
         }
-
         if (post.childPosts && post.childPosts.length > 0) {
           for (const child of post.childPosts) {
             if (!child.mediaUrl) continue;
             const isVideo = child.mediaType === 'MEDIA_POST_TYPE_VIDEO';
-            const url = isVideo && child.hdMediaUrl ? child.hdMediaUrl : child.mediaUrl;
             allMedia.push({
               id: child.id,
               postId: post.id,
-              url,
+              url: isVideo && child.hdMediaUrl ? child.hdMediaUrl : child.mediaUrl,
+              thumbUrl: child.mediaUrl,
               isVideo,
               mimeType: child.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
               prompt: child.originalPrompt || child.prompt || post.originalPrompt || post.prompt || '',
               createTime: child.createTime || post.createTime || '',
-              modelName: child.modelName || post.modelName || '',
             });
           }
         }
       }
 
       page++;
-      state.totalFetched = allMedia.length;
       updateStat('total', allMedia.length);
       setStatus(`Fetched ${allMedia.length} items (page ${page})…`);
-
       cursor = data.nextCursor || null;
       if (!cursor || posts.length < PAGE_SIZE) break;
-
       await sleep(150);
     }
-
     return allMedia;
   }
 
@@ -595,9 +781,7 @@
     try {
       const res = await apiPost(API.UNLIKE, { id: postId });
       return res && (res.success !== false);
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   }
 
   // ─── Download ─────────────────────────────────────────────────────────────
@@ -647,7 +831,7 @@
   }
 
   function setButtonsDisabled(disabled) {
-    ['gid-btn-fetch', 'gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun'].forEach(id => {
+    ['gid-btn-fetch', 'gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.disabled = disabled;
     });
@@ -659,6 +843,35 @@
     updateStat('total', state.posts.length || '—');
     updateStat('downloaded', state.downloadedCount || '—');
     updateStat('unfavorited', state.unfavoritedCount || '—');
+  }
+
+  function updateSelectionBanner() {
+    const banner = document.getElementById('gid-selection-banner');
+    const countEl = document.getElementById('gid-selection-count');
+    const descEl = document.getElementById('gid-selection-desc');
+    if (!banner) return;
+
+    if (state.useSelection && state.selectedIds.size > 0) {
+      banner.classList.add('visible');
+      if (countEl) countEl.textContent = `${state.selectedIds.size} items selected`;
+      if (descEl) descEl.textContent = 'Actions will apply to your selection only.';
+
+      // Update button labels to reflect selection
+      const dlBtn = document.getElementById('gid-btn-download');
+      const unfavBtn = document.getElementById('gid-btn-unfavorite');
+      const bothBtn = document.getElementById('gid-btn-both');
+      if (dlBtn) dlBtn.textContent = `⬇ Download Selected (${state.selectedIds.size})`;
+      if (unfavBtn) unfavBtn.textContent = `🗑 Unfavorite Selected (${state.selectedIds.size})`;
+      if (bothBtn) bothBtn.textContent = `⬇🗑 Download + Unfavorite Selected (${state.selectedIds.size})`;
+    } else {
+      banner.classList.remove('visible');
+      const dlBtn = document.getElementById('gid-btn-download');
+      const unfavBtn = document.getElementById('gid-btn-unfavorite');
+      const bothBtn = document.getElementById('gid-btn-both');
+      if (dlBtn) dlBtn.textContent = '⬇ Download All';
+      if (unfavBtn) unfavBtn.textContent = '🗑 Unfavorite All (Remove from Server)';
+      if (bothBtn) bothBtn.textContent = '⬇🗑 Download + Unfavorite All';
+    }
   }
 
   function updateDryRunToggleUI() {
@@ -673,22 +886,19 @@
     if (state.dryRunMode) {
       if (actionBtns) actionBtns.style.display = 'none';
       if (dryRunBtn) dryRunBtn.style.display = 'block';
+      const results = document.getElementById('gid-dryrun-results');
+      if (results) results.classList.remove('visible');
     } else {
       if (actionBtns) actionBtns.style.display = 'block';
       if (dryRunBtn) dryRunBtn.style.display = 'none';
-      // Hide dry run results if switching off
-      const results = document.getElementById('gid-dryrun-results');
-      if (results) results.classList.remove('visible');
     }
   }
 
   function renderDryRunResults(items) {
     const container = document.getElementById('gid-dryrun-results');
     if (!container) return;
-
     const imgCount = items.filter(i => !i.isVideo).length;
     const vidCount = items.filter(i => i.isVideo).length;
-
     container.innerHTML = `
       <div class="gid-dryrun-results-header">
         <span>Preview — ${items.length} files</span>
@@ -704,10 +914,7 @@
       <button class="gid-dryrun-export" id="gid-dryrun-export-btn">⬇ Export file list as .txt</button>
     `;
     container.classList.add('visible');
-
-    document.getElementById('gid-dryrun-export-btn').addEventListener('click', () => {
-      exportDryRunList(items);
-    });
+    document.getElementById('gid-dryrun-export-btn').addEventListener('click', () => exportDryRunList(items));
   }
 
   function exportDryRunList(items) {
@@ -726,7 +933,6 @@
       '─── URLs ────────────────────────────────────────────────',
       ...items.map(item => item.url),
     ];
-
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -734,6 +940,196 @@
     a.download = `grok-dryrun-${Date.now()}.txt`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  // ─── Picker Modal ─────────────────────────────────────────────────────────
+  let pickerSearchTerm = '';
+  let pickerFilterType = 'all';
+
+  function buildPickerOverlay() {
+    const overlay = document.createElement('div');
+    overlay.id = 'gid-picker-overlay';
+    overlay.innerHTML = `
+      <div id="gid-picker-header">
+        <div id="gid-picker-title">🖼 Select Items</div>
+        <div id="gid-picker-count">
+          <span id="gid-picker-sel-count">0</span> selected of
+          <span id="gid-picker-total-count">0</span>
+        </div>
+      </div>
+
+      <div class="gid-picker-toolbar">
+        <button class="gid-picker-toolbar-btn active" id="gid-picker-filter-all">All</button>
+        <button class="gid-picker-toolbar-btn" id="gid-picker-filter-images">Images</button>
+        <button class="gid-picker-toolbar-btn" id="gid-picker-filter-videos">Videos</button>
+        <input class="gid-picker-search" id="gid-picker-search" type="text" placeholder="Search by prompt…" />
+        <button class="gid-picker-toolbar-btn" id="gid-picker-select-all">Select All</button>
+        <button class="gid-picker-toolbar-btn" id="gid-picker-select-none">Clear</button>
+      </div>
+
+      <div id="gid-picker-grid">
+        <div id="gid-picker-empty">No items match your filter.</div>
+      </div>
+
+      <div id="gid-picker-footer">
+        <button id="gid-picker-cancel">Cancel</button>
+        <button id="gid-picker-confirm" disabled>✓ Use Selection</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Toolbar events
+    ['all', 'images', 'videos'].forEach(type => {
+      document.getElementById(`gid-picker-filter-${type}`).addEventListener('click', () => {
+        pickerFilterType = type;
+        document.querySelectorAll('.gid-picker-toolbar-btn').forEach(b => {
+          if (['gid-picker-filter-all','gid-picker-filter-images','gid-picker-filter-videos'].includes(b.id))
+            b.classList.remove('active');
+        });
+        document.getElementById(`gid-picker-filter-${type}`).classList.add('active');
+        renderPickerGrid();
+      });
+    });
+
+    document.getElementById('gid-picker-search').addEventListener('input', e => {
+      pickerSearchTerm = e.target.value.toLowerCase();
+      renderPickerGrid();
+    });
+
+    document.getElementById('gid-picker-select-all').addEventListener('click', () => {
+      getPickerVisibleItems().forEach(item => state.selectedIds.add(item.id));
+      renderPickerGrid();
+      updatePickerCounts();
+    });
+
+    document.getElementById('gid-picker-select-none').addEventListener('click', () => {
+      state.selectedIds.clear();
+      renderPickerGrid();
+      updatePickerCounts();
+    });
+
+    document.getElementById('gid-picker-cancel').addEventListener('click', closePicker);
+
+    document.getElementById('gid-picker-confirm').addEventListener('click', () => {
+      state.useSelection = state.selectedIds.size > 0;
+      closePicker();
+      updateSelectionBanner();
+      if (state.useSelection) {
+        setStatus(`${state.selectedIds.size} items selected. Actions will apply to selection only.`);
+      }
+    });
+
+    // Close on backdrop click
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) closePicker();
+    });
+  }
+
+  function getPickerVisibleItems() {
+    return state.posts.filter(item => {
+      if (pickerFilterType === 'images' && item.isVideo) return false;
+      if (pickerFilterType === 'videos' && !item.isVideo) return false;
+      if (pickerSearchTerm && !item.prompt.toLowerCase().includes(pickerSearchTerm)) return false;
+      return true;
+    });
+  }
+
+  function renderPickerGrid() {
+    const grid = document.getElementById('gid-picker-grid');
+    const emptyEl = document.getElementById('gid-picker-empty');
+    if (!grid) return;
+
+    const items = getPickerVisibleItems();
+
+    // Remove existing thumbs
+    grid.querySelectorAll('.gid-thumb').forEach(el => el.remove());
+
+    if (items.length === 0) {
+      if (emptyEl) emptyEl.classList.add('visible');
+      return;
+    }
+    if (emptyEl) emptyEl.classList.remove('visible');
+
+    const frag = document.createDocumentFragment();
+    items.forEach(item => {
+      const thumb = document.createElement('div');
+      thumb.className = 'gid-thumb' + (state.selectedIds.has(item.id) ? ' selected' : '');
+      thumb.dataset.id = item.id;
+
+      if (item.isVideo) {
+        thumb.innerHTML = `
+          <video src="${item.thumbUrl}" muted preload="metadata" style="pointer-events:none"></video>
+          <div class="gid-thumb-check"></div>
+          <div class="gid-thumb-type vid">VID</div>
+          ${item.prompt ? `<div class="gid-thumb-prompt">${item.prompt}</div>` : ''}
+        `;
+      } else {
+        thumb.innerHTML = `
+          <img src="${item.thumbUrl}" loading="lazy" alt="${item.prompt || ''}" onerror="this.style.display='none';this.nextElementSibling&&(this.nextElementSibling.style.display='flex')" />
+          <div class="gid-thumb-placeholder" style="display:none">🖼</div>
+          <div class="gid-thumb-check"></div>
+          <div class="gid-thumb-type img">IMG</div>
+          ${item.prompt ? `<div class="gid-thumb-prompt">${item.prompt}</div>` : ''}
+        `;
+      }
+
+      thumb.addEventListener('click', () => {
+        if (state.selectedIds.has(item.id)) {
+          state.selectedIds.delete(item.id);
+          thumb.classList.remove('selected');
+        } else {
+          state.selectedIds.add(item.id);
+          thumb.classList.add('selected');
+        }
+        updatePickerCounts();
+      });
+
+      frag.appendChild(thumb);
+    });
+    grid.appendChild(frag);
+    updatePickerCounts();
+  }
+
+  function updatePickerCounts() {
+    const selCount = document.getElementById('gid-picker-sel-count');
+    const totalCount = document.getElementById('gid-picker-total-count');
+    const confirmBtn = document.getElementById('gid-picker-confirm');
+    if (selCount) selCount.textContent = state.selectedIds.size;
+    if (totalCount) totalCount.textContent = state.posts.length;
+    if (confirmBtn) {
+      confirmBtn.disabled = state.selectedIds.size === 0;
+      confirmBtn.textContent = state.selectedIds.size > 0
+        ? `✓ Use Selection (${state.selectedIds.size})`
+        : '✓ Use Selection';
+    }
+  }
+
+  function openPicker() {
+    if (state.posts.length === 0) {
+      setStatus('Fetch your library first before picking items.', 'warning');
+      return;
+    }
+    pickerSearchTerm = '';
+    pickerFilterType = 'all';
+    const overlay = document.getElementById('gid-picker-overlay');
+    if (!overlay) return;
+
+    // Reset toolbar state
+    document.querySelectorAll('.gid-picker-toolbar-btn').forEach(b => {
+      if (['gid-picker-filter-all','gid-picker-filter-images','gid-picker-filter-videos'].includes(b.id))
+        b.classList.remove('active');
+    });
+    document.getElementById('gid-picker-filter-all').classList.add('active');
+    const searchEl = document.getElementById('gid-picker-search');
+    if (searchEl) searchEl.value = '';
+
+    renderPickerGrid();
+    overlay.classList.add('visible');
+  }
+
+  function closePicker() {
+    const overlay = document.getElementById('gid-picker-overlay');
+    if (overlay) overlay.classList.remove('visible');
   }
 
   // ─── Core Operations ──────────────────────────────────────────────────────
@@ -747,7 +1143,6 @@
     try {
       const posts = await fetchAllPosts();
       state.posts = posts;
-      state.totalFetched = posts.length;
       updateStat('total', posts.length);
       setStatus(`Found ${posts.length} media items.`, 'success');
       setProgress(100, `${posts.length} items loaded`);
@@ -760,20 +1155,21 @@
     }
   }
 
-  function getFilteredPosts() {
+  function getActiveItems() {
+    if (state.useSelection && state.selectedIds.size > 0) {
+      return state.posts.filter(p => state.selectedIds.has(p.id));
+    }
     if (state.filterType === 'images') return state.posts.filter(p => !p.isVideo);
     if (state.filterType === 'videos') return state.posts.filter(p => p.isVideo);
     return state.posts;
   }
 
-  // ── Dry Run ───────────────────────────────────────────────────────────────
   async function doDryRun() {
-    const items = getFilteredPosts();
+    const items = getActiveItems();
     if (items.length === 0) {
       setStatus('No items to preview. Fetch your library first.', 'warning');
       return;
     }
-
     state.cancelRequested = false;
     setButtonsDisabled(true);
     setProgress(0, `Scanning 0 / ${items.length}`, true);
@@ -785,34 +1181,26 @@
       dryRunItems.push(items[i]);
       const pct = ((i + 1) / items.length) * 100;
       setProgress(pct, `Scanning ${i + 1} / ${items.length}`, true);
-      // Small delay so the UI updates visibly
       if (i % 20 === 0) await sleep(10);
     }
 
     state.dryRunItems = dryRunItems;
     const imgCount = dryRunItems.filter(i => !i.isVideo).length;
     const vidCount = dryRunItems.filter(i => i.isVideo).length;
-
-    setStatus(
-      `Dry Run complete: ${dryRunItems.length} files (${imgCount} images, ${vidCount} videos). No files were downloaded or modified.`,
-      'dryrun'
-    );
+    setStatus(`Dry Run complete: ${dryRunItems.length} files (${imgCount} images, ${vidCount} videos). No files were downloaded or modified.`, 'dryrun');
     setProgress(100, `${dryRunItems.length} files identified`, true);
     renderDryRunResults(dryRunItems);
-
     setButtonsDisabled(false);
     setTimeout(hideProgress, 3000);
   }
 
-  // ── Download ──────────────────────────────────────────────────────────────
   async function doDownload() {
     if (state.isDownloading) return;
-    const items = getFilteredPosts();
+    const items = getActiveItems();
     if (items.length === 0) {
       setStatus('No items to download. Fetch your library first.', 'warning');
       return;
     }
-
     state.isDownloading = true;
     state.cancelRequested = false;
     state.downloadedCount = 0;
@@ -822,26 +1210,17 @@
     setStatus(`Downloading ${items.length} files…`);
 
     for (let i = 0; i < items.length; i++) {
-      if (state.cancelRequested) {
-        setStatus(`Cancelled after ${state.downloadedCount} downloads.`, 'warning');
-        break;
-      }
-
+      if (state.cancelRequested) { setStatus(`Cancelled after ${state.downloadedCount} downloads.`, 'warning'); break; }
       const ok = await downloadItem(items[i]);
-      if (ok) state.downloadedCount++;
-      else state.failedCount++;
-
-      const pct = ((i + 1) / items.length) * 100;
-      setProgress(pct, `${i + 1} / ${items.length} — ${state.downloadedCount} saved, ${state.failedCount} failed`);
+      if (ok) state.downloadedCount++; else state.failedCount++;
+      setProgress(((i + 1) / items.length) * 100, `${i + 1} / ${items.length} — ${state.downloadedCount} saved, ${state.failedCount} failed`);
       updateStat('downloaded', state.downloadedCount);
       await sleep(DOWNLOAD_DELAY_MS);
     }
 
     if (!state.cancelRequested) {
-      const msg = `Done! ${state.downloadedCount} downloaded${state.failedCount > 0 ? `, ${state.failedCount} failed` : ''}.`;
-      setStatus(msg, state.failedCount > 0 ? 'warning' : 'success');
+      setStatus(`Done! ${state.downloadedCount} downloaded${state.failedCount > 0 ? `, ${state.failedCount} failed` : ''}.`, state.failedCount > 0 ? 'warning' : 'success');
     }
-
     state.isDownloading = false;
     setButtonsDisabled(false);
     setTimeout(hideProgress, 3000);
@@ -849,16 +1228,11 @@
 
   async function doUnfavorite(postsOverride) {
     if (state.isUnfavoriting) return;
-    const items = postsOverride || getFilteredPosts();
-    if (items.length === 0) {
-      setStatus('No items to unfavorite. Fetch your library first.', 'warning');
-      return;
-    }
+    const items = postsOverride || getActiveItems();
+    if (items.length === 0) { setStatus('No items to unfavorite. Fetch your library first.', 'warning'); return; }
 
     if (!postsOverride) {
-      const confirmed = confirm(
-        `⚠️ Unfavorite ${items.length} items?\n\nThis will remove them from your Grok Imagine favorites.\n\nProceed?`
-      );
+      const confirmed = confirm(`⚠️ Unfavorite ${items.length} items?\n\nThis will remove them from your Grok Imagine favorites.\n\nProceed?`);
       if (!confirmed) return;
     }
 
@@ -877,24 +1251,15 @@
     });
 
     for (let i = 0; i < uniquePosts.length; i++) {
-      if (state.cancelRequested) {
-        setStatus(`Cancelled after ${state.unfavoritedCount} unfavorites.`, 'warning');
-        break;
-      }
-
+      if (state.cancelRequested) { setStatus(`Cancelled after ${state.unfavoritedCount} unfavorites.`, 'warning'); break; }
       const ok = await unlikePost(uniquePosts[i].postId);
       if (ok) state.unfavoritedCount++;
-
-      const pct = ((i + 1) / uniquePosts.length) * 100;
-      setProgress(pct, `${i + 1} / ${uniquePosts.length} — ${state.unfavoritedCount} removed`);
+      setProgress(((i + 1) / uniquePosts.length) * 100, `${i + 1} / ${uniquePosts.length} — ${state.unfavoritedCount} removed`);
       updateStat('unfavorited', state.unfavoritedCount);
       await sleep(UNFAVORITE_DELAY_MS);
     }
 
-    if (!state.cancelRequested) {
-      setStatus(`Done! ${state.unfavoritedCount} items unfavorited.`, 'success');
-    }
-
+    if (!state.cancelRequested) setStatus(`Done! ${state.unfavoritedCount} items unfavorited.`, 'success');
     state.isUnfavoriting = false;
     setButtonsDisabled(false);
     setTimeout(hideProgress, 3000);
@@ -902,18 +1267,12 @@
 
   async function doDownloadAndUnfavorite() {
     if (state.isDownloading || state.isUnfavoriting) return;
-    const items = getFilteredPosts();
-    if (items.length === 0) {
-      setStatus('No items found. Fetch your library first.', 'warning');
-      return;
-    }
+    const items = getActiveItems();
+    if (items.length === 0) { setStatus('No items found. Fetch your library first.', 'warning'); return; }
 
-    const confirmed = confirm(
-      `Download ${items.length} items AND unfavorite them?\n\nFiles will be saved to: ${state.downloadFolder}/\nItems will be removed from your Grok favorites.\n\nProceed?`
-    );
+    const confirmed = confirm(`Download ${items.length} items AND unfavorite them?\n\nFiles will be saved to: ${state.downloadFolder}/\nItems will be removed from your Grok favorites.\n\nProceed?`);
     if (!confirmed) return;
 
-    // Download phase
     state.isDownloading = true;
     state.cancelRequested = false;
     state.downloadedCount = 0;
@@ -925,22 +1284,15 @@
     for (let i = 0; i < items.length; i++) {
       if (state.cancelRequested) break;
       const ok = await downloadItem(items[i]);
-      if (ok) state.downloadedCount++;
-      else state.failedCount++;
+      if (ok) state.downloadedCount++; else state.failedCount++;
       setProgress(((i + 1) / items.length) * 50, `Downloading ${i + 1} / ${items.length}`);
       updateStat('downloaded', state.downloadedCount);
       await sleep(DOWNLOAD_DELAY_MS);
     }
 
     state.isDownloading = false;
+    if (state.cancelRequested) { setStatus(`Cancelled. ${state.downloadedCount} downloaded.`, 'warning'); setButtonsDisabled(false); return; }
 
-    if (state.cancelRequested) {
-      setStatus(`Cancelled. ${state.downloadedCount} downloaded.`, 'warning');
-      setButtonsDisabled(false);
-      return;
-    }
-
-    // Unfavorite phase
     setStatus(`Downloads complete. Unfavoriting…`);
     state.isUnfavoriting = true;
     state.unfavoritedCount = 0;
@@ -967,7 +1319,7 @@
     setTimeout(hideProgress, 4000);
   }
 
-  // ─── Build UI ─────────────────────────────────────────────────────────────
+  // ─── Build Panel ──────────────────────────────────────────────────────────
   function buildPanel() {
     const panel = document.createElement('div');
     panel.id = 'gid-panel';
@@ -997,7 +1349,7 @@
           </div>
         </div>
 
-        <div class="gid-section-label">Filter</div>
+        <div class="gid-section-label">Filter (applies when no selection active)</div>
         <div class="gid-filter-row">
           <button class="gid-filter-btn active" id="gid-filter-all">All</button>
           <button class="gid-filter-btn" id="gid-filter-images">Images</button>
@@ -1008,6 +1360,15 @@
         <div class="gid-input-row">
           <span class="gid-input-label">Subfolder:</span>
           <input class="gid-input" id="gid-folder-input" type="text" value="${state.downloadFolder}" placeholder="grok-imagine" />
+        </div>
+
+        <!-- Selection Banner -->
+        <div class="gid-selection-banner" id="gid-selection-banner">
+          <div class="gid-selection-banner-left">
+            <div class="gid-selection-count" id="gid-selection-count">0 items selected</div>
+            <div class="gid-selection-desc" id="gid-selection-desc">Actions will apply to your selection only.</div>
+          </div>
+          <button class="gid-selection-clear" id="gid-selection-clear">✕ Clear</button>
         </div>
 
         <!-- Dry Run Toggle -->
@@ -1035,6 +1396,7 @@
         <div class="gid-status" id="gid-status">Navigate to grok.com/imagine/favorites, then fetch your library.</div>
 
         <button class="gid-btn gid-btn-secondary" id="gid-btn-fetch">🔍 Fetch Library</button>
+        <button class="gid-btn gid-btn-picker" id="gid-btn-picker" disabled>🖼 Pick Items to Select…</button>
 
         <hr class="gid-divider">
 
@@ -1068,12 +1430,8 @@
   }
 
   function attachEvents(panel) {
-    document.getElementById('gid-close-btn').addEventListener('click', () => {
-      panel.classList.add('gid-hidden');
-    });
-    document.getElementById('gid-toggle-btn').addEventListener('click', () => {
-      panel.classList.toggle('gid-hidden');
-    });
+    document.getElementById('gid-close-btn').addEventListener('click', () => panel.classList.add('gid-hidden'));
+    document.getElementById('gid-toggle-btn').addEventListener('click', () => panel.classList.toggle('gid-hidden'));
 
     document.getElementById('gid-folder-input').addEventListener('input', e => {
       state.downloadFolder = e.target.value.trim() || 'grok-imagine';
@@ -1086,17 +1444,16 @@
         state.filterType = type;
         document.querySelectorAll('.gid-filter-btn').forEach(b => b.classList.remove('active'));
         document.getElementById(`gid-filter-${type}`).classList.add('active');
-        const count = getFilteredPosts().length;
-        if (count > 0) setStatus(`${count} items selected (${type}).`);
+        const count = getActiveItems().length;
+        if (count > 0) setStatus(`${count} items in scope (${type}).`);
       });
     });
 
-    // Dry Run toggle — clicking the row or the checkbox both work
+    // Dry Run toggle
     const dryRunRow = document.getElementById('gid-dryrun-row');
     const dryRunCheckbox = document.getElementById('gid-dryrun-checkbox');
-
     dryRunRow.addEventListener('click', (e) => {
-      if (e.target === dryRunCheckbox) return; // checkbox handles itself
+      if (e.target === dryRunCheckbox) return;
       dryRunCheckbox.checked = !dryRunCheckbox.checked;
       state.dryRunMode = dryRunCheckbox.checked;
       GM_setValue('dryRunMode', state.dryRunMode);
@@ -1108,12 +1465,24 @@
       updateDryRunToggleUI();
     });
 
+    // Selection clear
+    document.getElementById('gid-selection-clear').addEventListener('click', () => {
+      state.selectedIds.clear();
+      state.useSelection = false;
+      updateSelectionBanner();
+      setStatus(`Selection cleared. Operating on all filtered items.`);
+    });
+
+    // Picker button
+    document.getElementById('gid-btn-picker').addEventListener('click', openPicker);
+
     // Fetch
     document.getElementById('gid-btn-fetch').addEventListener('click', async () => {
       await doFetch();
-      ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun'].forEach(id => {
+      const hasItems = state.posts.length > 0;
+      ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker'].forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.disabled = state.posts.length === 0;
+        if (el) el.disabled = !hasItems;
       });
     });
 
@@ -1131,14 +1500,12 @@
   // ─── Init ─────────────────────────────────────────────────────────────────
   function init() {
     if (document.getElementById('gid-panel')) return;
-
     const panel = buildPanel();
     const toggleBtn = buildToggleBtn();
-
     document.body.appendChild(panel);
     document.body.appendChild(toggleBtn);
-
     attachEvents(panel);
+    buildPickerOverlay();
     refreshUI();
   }
 
