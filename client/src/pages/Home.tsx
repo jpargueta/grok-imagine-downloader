@@ -13,7 +13,7 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_VERSION = "1.2.0";
-const ETH_ADDRESS = "0x5ac260e9111bd156a2ad70e8e5db25cd261690c6";
+const ETH_ADDRESS = "0xEd1158FfEe4F69090e6a8F54D544fF014BFb7091";
 
 const changelog = [
   {
@@ -223,13 +223,35 @@ function DonateSection() {
             custom={2}
             style={{ fontSize: 15, color: "#64748b", marginBottom: 32, lineHeight: 1.6 }}
           >
-            This tool is free and open-source. If it saved you time, consider sending a tip in ETH.
+            This tool is free and open-source. If it saved you time, consider sending a tip in USDC on Base.
           </motion.p>
+
+          {/* Network warning */}
+          <motion.div
+            variants={fadeUp}
+            custom={3}
+            style={{
+              background: "rgba(245,158,11,0.07)",
+              border: "1px solid rgba(245,158,11,0.25)",
+              borderRadius: 10,
+              padding: "10px 16px",
+              marginBottom: 16,
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+              textAlign: "left",
+            }}
+          >
+            <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>⚠️</span>
+            <p style={{ fontSize: 12, color: "#fbbf24", lineHeight: 1.6, margin: 0 }}>
+              <strong>Base network only.</strong> Send USDC on the <strong>Base</strong> network to this address. Do not send on Ethereum mainnet, Arbitrum, or any other network — funds sent to the wrong network may be lost.
+            </p>
+          </motion.div>
 
           {/* Address card */}
           <motion.div
             variants={fadeUp}
-            custom={3}
+            custom={4}
             style={{
               background: "rgba(99,102,241,0.07)",
               border: "1px solid rgba(99,102,241,0.25)",
@@ -277,10 +299,10 @@ function DonateSection() {
             </button>
           </motion.div>
 
-          {/* Etherscan link */}
-          <motion.div variants={fadeUp} custom={4}>
+          {/* Basescan link */}
+          <motion.div variants={fadeUp} custom={5}>
             <a
-              href={`https://etherscan.io/address/${ETH_ADDRESS}`}
+              href={`https://basescan.org/address/${ETH_ADDRESS}`}
               target="_blank"
               rel="noopener noreferrer"
               style={{
@@ -300,7 +322,7 @@ function DonateSection() {
                 <polyline points="15 3 21 3 21 9" />
                 <line x1="10" y1="14" x2="21" y2="3" />
               </svg>
-              View on Etherscan
+              View on Basescan
             </a>
           </motion.div>
         </motion.div>
@@ -1237,6 +1259,9 @@ export default function Home() {
         <div className="container">
           <p style={{ marginBottom: 8 }}>
             Grok Imagine Downloader is an unofficial, open-source tool. Not affiliated with xAI or Grok.
+          </p>
+          <p style={{ marginTop: 8, color: "#1e293b" }}>
+            Built with ❤️ — tips keep it maintained
           </p>
           <p>
             <a
