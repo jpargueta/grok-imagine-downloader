@@ -13,6 +13,7 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_VERSION = "1.2.0";
+const ETH_ADDRESS = "0x5ac260e9111bd156a2ad70e8e5db25cd261690c6";
 
 const changelog = [
   {
@@ -160,6 +161,153 @@ const faqs = [
     a: "The script only reads your media list and calls the unlike endpoint — both are standard Grok API calls. It does not modify any other account data. Use at your own risk; this is an unofficial tool.",
   },
 ];
+
+function DonateSection() {
+  const [copied, setCopied] = useState(false);
+
+  function copyAddress() {
+    navigator.clipboard.writeText(ETH_ADDRESS).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  return (
+    <section
+      style={{
+        padding: "72px 0",
+        borderTop: "1px solid rgba(255,255,255,0.05)",
+        background: "rgba(8,12,24,0.6)",
+      }}
+    >
+      <div className="container" style={{ maxWidth: 640, margin: "0 auto", textAlign: "center" }}>
+        <motion.div
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, amount: 0.01 }}
+        >
+          {/* Ethereum diamond icon */}
+          <motion.div variants={fadeUp} custom={0} style={{ marginBottom: 20 }}>
+            <svg
+              width="48"
+              height="48"
+              viewBox="0 0 256 417"
+              xmlns="http://www.w3.org/2000/svg"
+              style={{ margin: "0 auto", display: "block", filter: "drop-shadow(0 0 16px rgba(99,102,241,0.5))" }}
+            >
+              <polygon fill="#8b5cf6" fillOpacity="0.9" points="127.9611,0 125.1661,9.5 125.1661,285.168 127.9611,287.958 255.9231,212.32" />
+              <polygon fill="#6366f1" points="127.9611,0 0,212.32 127.9611,287.958 127.9611,154.158" />
+              <polygon fill="#a78bfa" fillOpacity="0.9" points="127.9611,312.1866 126.3861,314.1066 126.3861,412.3056 127.9611,416.9066 255.9991,236.5866" />
+              <polygon fill="#7c3aed" points="127.9611,416.9066 127.9611,312.1866 0,236.5866" />
+              <polygon fill="#6366f1" fillOpacity="0.7" points="127.9611,287.9577 255.9221,212.3207 127.9611,154.1587" />
+              <polygon fill="#4f46e5" fillOpacity="0.7" points="0.0009,212.3207 127.9609,287.9577 127.9609,154.1587" />
+            </svg>
+          </motion.div>
+
+          <motion.h2
+            variants={fadeUp}
+            custom={1}
+            style={{
+              fontFamily: "'Outfit', system-ui, sans-serif",
+              fontSize: "clamp(22px, 3vw, 32px)",
+              fontWeight: 800,
+              letterSpacing: "-0.02em",
+              marginBottom: 10,
+            }}
+          >
+            Support the Project
+          </motion.h2>
+
+          <motion.p
+            variants={fadeUp}
+            custom={2}
+            style={{ fontSize: 15, color: "#64748b", marginBottom: 32, lineHeight: 1.6 }}
+          >
+            This tool is free and open-source. If it saved you time, consider sending a tip in ETH.
+          </motion.p>
+
+          {/* Address card */}
+          <motion.div
+            variants={fadeUp}
+            custom={3}
+            style={{
+              background: "rgba(99,102,241,0.07)",
+              border: "1px solid rgba(99,102,241,0.25)",
+              borderRadius: 16,
+              padding: "20px 24px",
+              marginBottom: 16,
+              display: "flex",
+              alignItems: "center",
+              gap: 14,
+              flexWrap: "wrap",
+              justifyContent: "center",
+            }}
+          >
+            <code
+              style={{
+                fontFamily: "'Courier New', monospace",
+                fontSize: "clamp(11px, 2vw, 13px)",
+                color: "#a5b4fc",
+                letterSpacing: "0.04em",
+                wordBreak: "break-all",
+                flex: 1,
+                minWidth: 200,
+                textAlign: "left",
+              }}
+            >
+              {ETH_ADDRESS}
+            </code>
+            <button
+              onClick={copyAddress}
+              style={{
+                padding: "9px 18px",
+                borderRadius: 10,
+                border: copied ? "1px solid rgba(74,222,128,0.4)" : "1px solid rgba(99,102,241,0.4)",
+                background: copied ? "rgba(74,222,128,0.1)" : "rgba(99,102,241,0.15)",
+                color: copied ? "#4ade80" : "#a5b4fc",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: "pointer",
+                transition: "all 0.2s",
+                whiteSpace: "nowrap",
+                flexShrink: 0,
+              }}
+            >
+              {copied ? "✓ Copied!" : "Copy Address"}
+            </button>
+          </motion.div>
+
+          {/* Etherscan link */}
+          <motion.div variants={fadeUp} custom={4}>
+            <a
+              href={`https://etherscan.io/address/${ETH_ADDRESS}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                fontSize: 12,
+                color: "#475569",
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                transition: "color 0.15s",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.color = "#6366f1")}
+              onMouseLeave={e => (e.currentTarget.style.color = "#475569")}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                <polyline points="15 3 21 3 21 9" />
+                <line x1="10" y1="14" x2="21" y2="3" />
+              </svg>
+              View on Etherscan
+            </a>
+          </motion.div>
+        </motion.div>
+      </div>
+    </section>
+  );
+}
 
 export default function Home() {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
@@ -1072,6 +1220,9 @@ export default function Home() {
           </motion.div>
         </div>
       </section>
+
+      {/* ── Donate ───────────────────────────────────────────────────────── */}
+      <DonateSection />
 
       {/* ── Footer ───────────────────────────────────────────────────────── */}
       <footer
