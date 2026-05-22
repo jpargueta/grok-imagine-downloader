@@ -13,7 +13,9 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_VERSION = "1.2.0";
-const ETH_ADDRESS = "0xEd1158FfEe4F69090e6a8F54D544fF014BFb7091";
+const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
+const ENS_NAME = "obijuan.uni.eth";
+const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
@@ -223,86 +225,88 @@ function DonateSection() {
             custom={2}
             style={{ fontSize: 15, color: "#64748b", marginBottom: 32, lineHeight: 1.6 }}
           >
-            This tool is free and open-source. If it saved you time, consider sending a tip in USDC on Base.
+            This tool is free and open-source. If it saved you time, consider sending a tip — accepted on 18 networks.
           </motion.p>
 
-          {/* Network warning */}
+          {/* QR code + address card */}
           <motion.div
             variants={fadeUp}
             custom={3}
             style={{
-              background: "rgba(245,158,11,0.07)",
-              border: "1px solid rgba(245,158,11,0.25)",
-              borderRadius: 10,
-              padding: "10px 16px",
-              marginBottom: 16,
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 8,
-              textAlign: "left",
-            }}
-          >
-            <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>⚠️</span>
-            <p style={{ fontSize: 12, color: "#fbbf24", lineHeight: 1.6, margin: 0 }}>
-              <strong>Base network only.</strong> Send USDC on the <strong>Base</strong> network to this address. Do not send on Ethereum mainnet, Arbitrum, or any other network — funds sent to the wrong network may be lost.
-            </p>
-          </motion.div>
-
-          {/* Address card */}
-          <motion.div
-            variants={fadeUp}
-            custom={4}
-            style={{
               background: "rgba(99,102,241,0.07)",
               border: "1px solid rgba(99,102,241,0.25)",
               borderRadius: 16,
-              padding: "20px 24px",
+              padding: "24px",
               marginBottom: 16,
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
-              gap: 14,
-              flexWrap: "wrap",
-              justifyContent: "center",
+              gap: 16,
             }}
           >
-            <code
+            {/* ENS name */}
+            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'Outfit', system-ui, sans-serif", letterSpacing: "-0.01em" }}>
+              <span style={{ color: "#e2e8f0" }}>obijuan</span>
+              <span style={{ color: "#a5b4fc" }}>.uni.eth</span>
+            </div>
+
+            {/* QR code */}
+            <img
+              src={QR_CODE_URL}
+              alt="Wallet QR code for obijuan.uni.eth"
               style={{
-                fontFamily: "'Courier New', monospace",
-                fontSize: "clamp(11px, 2vw, 13px)",
-                color: "#a5b4fc",
-                letterSpacing: "0.04em",
-                wordBreak: "break-all",
-                flex: 1,
-                minWidth: 200,
-                textAlign: "left",
+                width: 180,
+                height: 180,
+                borderRadius: 12,
+                border: "3px solid rgba(99,102,241,0.3)",
+                objectFit: "cover",
+                objectPosition: "center 38%",
               }}
-            >
-              {ETH_ADDRESS}
-            </code>
-            <button
-              onClick={copyAddress}
-              style={{
-                padding: "9px 18px",
-                borderRadius: 10,
-                border: copied ? "1px solid rgba(74,222,128,0.4)" : "1px solid rgba(99,102,241,0.4)",
-                background: copied ? "rgba(74,222,128,0.1)" : "rgba(99,102,241,0.15)",
-                color: copied ? "#4ade80" : "#a5b4fc",
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: "pointer",
-                transition: "all 0.2s",
-                whiteSpace: "nowrap",
-                flexShrink: 0,
-              }}
-            >
-              {copied ? "✓ Copied!" : "Copy Address"}
-            </button>
+            />
+
+            {/* Address + copy */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "center", width: "100%" }}>
+              <code
+                style={{
+                  fontFamily: "'Courier New', monospace",
+                  fontSize: "clamp(10px, 1.8vw, 12px)",
+                  color: "#a5b4fc",
+                  letterSpacing: "0.04em",
+                  wordBreak: "break-all",
+                  flex: 1,
+                  minWidth: 180,
+                  textAlign: "left",
+                }}
+              >
+                {ETH_ADDRESS}
+              </code>
+              <button
+                onClick={copyAddress}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: 10,
+                  border: copied ? "1px solid rgba(74,222,128,0.4)" : "1px solid rgba(99,102,241,0.4)",
+                  background: copied ? "rgba(74,222,128,0.1)" : "rgba(99,102,241,0.15)",
+                  color: copied ? "#4ade80" : "#a5b4fc",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                }}
+              >
+                {copied ? "✓ Copied!" : "Copy Address"}
+              </button>
+            </div>
+
+            <p style={{ fontSize: 11, color: "#475569", margin: 0 }}>Accepted on 18 networks</p>
           </motion.div>
 
-          {/* Basescan link */}
+          {/* Etherscan link */}
           <motion.div variants={fadeUp} custom={5}>
             <a
-              href={`https://basescan.org/address/${ETH_ADDRESS}`}
+              href={`https://etherscan.io/address/${ETH_ADDRESS}`}
               target="_blank"
               rel="noopener noreferrer"
               style={{
@@ -322,7 +326,7 @@ function DonateSection() {
                 <polyline points="15 3 21 3 21 9" />
                 <line x1="10" y1="14" x2="21" y2="3" />
               </svg>
-              View on Basescan
+              View on Etherscan
             </a>
           </motion.div>
         </motion.div>
