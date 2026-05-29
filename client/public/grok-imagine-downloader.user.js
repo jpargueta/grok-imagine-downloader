@@ -46,6 +46,7 @@
     unfavoritedCount: 0,
     dryRunItems: [],
     downloadFolder: GM_getValue('downloadFolder', 'grok-imagine'),
+    batchLimit: GM_getValue('batchLimit', 0),   // 0 = no limit (all)
     filterType: 'all',
     dryRunMode: GM_getValue('dryRunMode', false),
   };
@@ -1156,12 +1157,19 @@
   }
 
   function getActiveItems() {
+    let result;
     if (state.useSelection && state.selectedIds.size > 0) {
-      return state.posts.filter(p => state.selectedIds.has(p.id));
+      result = state.posts.filter(p => state.selectedIds.has(p.id));
+    } else if (state.filterType === 'images') {
+      result = state.posts.filter(p => !p.isVideo);
+    } else if (state.filterType === 'videos') {
+      result = state.posts.filter(p => p.isVideo);
+    } else {
+      result = state.posts;
     }
-    if (state.filterType === 'images') return state.posts.filter(p => !p.isVideo);
-    if (state.filterType === 'videos') return state.posts.filter(p => p.isVideo);
-    return state.posts;
+    // Apply batch limit (0 = no limit)
+    if (state.batchLimit > 0) result = result.slice(0, state.batchLimit);
+    return result;
   }
 
   async function doDryRun() {
@@ -1362,6 +1370,16 @@
           <input class="gid-input" id="gid-folder-input" type="text" value="${state.downloadFolder}" placeholder="grok-imagine" />
         </div>
 
+        <div class="gid-section-label">Batch Limit</div>
+        <div class="gid-input-row">
+          <span class="gid-input-label">Max files:</span>
+          <input class="gid-input" id="gid-batch-input" type="number" min="0" max="6000"
+            value="${state.batchLimit || ''}" placeholder="All (no limit)" style="width:120px" />
+        </div>
+        <div style="font-size:11px;color:#475569;margin:-6px 0 8px;padding:0 2px">
+          Leave blank to download everything. Max recommended: 6,000.
+        </div>
+
         <!-- Selection Banner -->
         <div class="gid-selection-banner" id="gid-selection-banner">
           <div class="gid-selection-banner-left">
@@ -1436,6 +1454,14 @@
     document.getElementById('gid-folder-input').addEventListener('input', e => {
       state.downloadFolder = e.target.value.trim() || 'grok-imagine';
       GM_setValue('downloadFolder', state.downloadFolder);
+    });
+
+    document.getElementById('gid-batch-input').addEventListener('input', e => {
+      const val = parseInt(e.target.value, 10);
+      state.batchLimit = (!isNaN(val) && val > 0) ? Math.min(val, 6000) : 0;
+      GM_setValue('batchLimit', state.batchLimit);
+      // clamp displayed value to 6000 if user types higher
+      if (!isNaN(val) && val > 6000) e.target.value = 6000;
     });
 
     // Filter buttons
