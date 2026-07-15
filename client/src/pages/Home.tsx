@@ -12,17 +12,28 @@ import { motion } from "framer-motion";
 const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/hero-bg-3WyWRMW5WZoB6TWmYp9h57.webp";
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.2.1";
+const SCRIPT_VERSION = "1.3.0";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.2.1",
-    date: "May 2026",
+    version: "1.3.0",
+    date: "Jul 2026",
     tag: "latest",
     tagColor: "#6366f1",
+    changes: [
+      { type: "new", text: "Reconnect & Resume — if a download or unfavorite is interrupted (network drop, browser close, or cancel), a green banner appears on next load showing how many items remain. One click picks up exactly where it left off." },
+      { type: "new", text: "Destination Folder dropdown — choose from preset subfolder paths (grok-imagine, images, videos, batch-1/2/3) or select \"Custom\" to type any path. Saved across sessions." },
+      { type: "improve", text: "Progress is checkpointed every 10 items so a crash loses at most 10 items of progress, not the entire run." },
+    ],
+  },
+  {
+    version: "1.2.1",
+    date: "May 2026",
+    tag: "previous",
+    tagColor: "#475569",
     changes: [
       { type: "new", text: "Batch Limit field — set a maximum number of files to process per operation (blank = no limit, max recommended 6,000). Persisted across sessions." },
       { type: "improve", text: "Batch limit applies uniformly to all modes: download, unfavorite, dry run, and picker selection." },
@@ -31,8 +42,8 @@ const changelog = [
   {
     version: "1.2.0",
     date: "May 2026",
-    tag: "previous",
-    tagColor: "#475569",
+    tag: "older",
+    tagColor: "#334155",
     changes: [
       { type: "new", text: "Visual thumbnail picker — browse a full-screen grid of all your creations, search by prompt, filter by type, and select individual items before acting." },
       { type: "new", text: "Selection mode — once items are picked, all action buttons (Download, Unfavorite, Download+Unfavorite) operate only on the selection." },
@@ -98,9 +109,14 @@ const features = [
     desc: "Runs entirely in your browser using your existing Grok session. No data ever touches a third-party server.",
   },
   {
-    icon: "🎛",
-    title: "Granular Control",
-    desc: "Filter by images only, videos only, or all media. Set a custom download subfolder. Download and unfavorite independently.",
+    icon: "📂",
+    title: "Destination Folder Presets",
+    desc: "Choose from preset subfolders (images, videos, batch-1/2/3) or type a custom path. All files land inside your browser\u2019s Downloads folder.",
+  },
+  {
+    icon: "↩️",
+    title: "Reconnect & Resume",
+    desc: "Interrupted by a network drop or browser close? A green banner appears on next visit showing exactly how many items remain. One click resumes from where you left off.",
   },
   {
     icon: "📦",

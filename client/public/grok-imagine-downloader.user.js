@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.2.1
-// @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite them. Includes Dry Run mode and a visual thumbnail picker to select a subset before acting.
+// @version      1.3.0
+// @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite them. Includes Dry Run mode, visual thumbnail picker, reconnect/resume after interruption, and destination folder presets.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/imagine*
 // @icon         https://grok.com/favicon.ico
@@ -23,7 +23,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.2.1';
+  const SCRIPT_VERSION = '1.3.0';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -31,6 +31,16 @@
   const PAGE_SIZE = 40;
   const DOWNLOAD_DELAY_MS = 350;
   const UNFAVORITE_DELAY_MS = 200;
+
+  const FOLDER_PRESETS = [
+    { label: 'grok-imagine (default)', value: 'grok-imagine' },
+    { label: 'grok-imagine/images', value: 'grok-imagine/images' },
+    { label: 'grok-imagine/videos', value: 'grok-imagine/videos' },
+    { label: 'grok-imagine/batch-1', value: 'grok-imagine/batch-1' },
+    { label: 'grok-imagine/batch-2', value: 'grok-imagine/batch-2' },
+    { label: 'grok-imagine/batch-3', value: 'grok-imagine/batch-3' },
+    { label: '— Custom path…', value: '__custom__' },
+  ];
 
   // ─── State ────────────────────────────────────────────────────────────────
   let state = {
@@ -49,6 +59,10 @@
     batchLimit: GM_getValue('batchLimit', 0),   // 0 = no limit (all)
     filterType: 'all',
     dryRunMode: GM_getValue('dryRunMode', false),
+    // Resume / reconnect state
+    resumeOp: GM_getValue('resumeOp', null),       // 'download' | 'unfavorite' | 'both'
+    resumeIndex: GM_getValue('resumeIndex', 0),    // next item index to process
+    resumePostIds: GM_getValue('resumePostIds', null), // JSON array of post IDs
   };
 
   // ─── Styles ───────────────────────────────────────────────────────────────
@@ -430,6 +444,47 @@
       color: #a5b4fc;
     }
     .gid-btn-picker:not(:disabled):hover { background: rgba(99,102,241,0.2); }
+    .gid-btn-reconnect {
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: #6ee7b7;
+      font-size: 11px;
+    }
+    .gid-btn-reconnect:not(:disabled):hover { background: rgba(16, 185, 129, 0.22); }
+    .gid-select {
+      flex: 1;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 12px;
+      color: #e2e8f0;
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.15s;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 28px;
+    }
+    .gid-select:focus { border-color: rgba(59,130,246,0.5); }
+    .gid-select option { background: #0f172a; color: #e2e8f0; }
+    .gid-reconnect-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 10px;
+      padding: 9px 12px;
+      margin-bottom: 12px;
+      gap: 8px;
+    }
+    .gid-reconnect-banner.visible { display: flex; }
+    .gid-reconnect-info { font-size: 11px; color: #6ee7b7; line-height: 1.4; }
+    .gid-reconnect-info strong { font-size: 12px; display: block; margin-bottom: 2px; }
 
     .gid-footer {
       padding: 8px 16px 12px;
@@ -832,7 +887,7 @@
   }
 
   function setButtonsDisabled(disabled) {
-    ['gid-btn-fetch', 'gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker'].forEach(id => {
+    ['gid-btn-fetch', 'gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker', 'gid-btn-reconnect'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.disabled = disabled;
     });
@@ -1134,6 +1189,90 @@
   }
 
   // ─── Core Operations ──────────────────────────────────────────────────────
+  // ─── Resume / Reconnect ──────────────────────────────────────────────────
+  function saveResume(op, index, items) {
+    state.resumeOp = op;
+    state.resumeIndex = index;
+    state.resumePostIds = JSON.stringify(items.map(i => i.id));
+    GM_setValue('resumeOp', op);
+    GM_setValue('resumeIndex', index);
+    GM_setValue('resumePostIds', state.resumePostIds);
+  }
+
+  function clearResume() {
+    state.resumeOp = null;
+    state.resumeIndex = 0;
+    state.resumePostIds = null;
+    GM_setValue('resumeOp', null);
+    GM_setValue('resumeIndex', 0);
+    GM_setValue('resumePostIds', null);
+  }
+
+  function updateReconnectBanner() {
+    const banner = document.getElementById('gid-reconnect-banner');
+    const desc = document.getElementById('gid-reconnect-desc');
+    if (!banner) return;
+    if (!state.resumeOp || !state.resumePostIds) {
+      banner.classList.remove('visible');
+      return;
+    }
+    let ids;
+    try { ids = JSON.parse(state.resumePostIds); } catch { clearResume(); return; }
+    const remaining = ids.length - state.resumeIndex;
+    if (remaining <= 0) { clearResume(); return; }
+    const opLabel = state.resumeOp === 'download' ? 'Download' : state.resumeOp === 'unfavorite' ? 'Unfavorite' : 'Download + Unfavorite';
+    desc.textContent = `${opLabel} — ${remaining} of ${ids.length} items remaining`;
+    banner.classList.add('visible');
+  }
+
+  async function doReconnect() {
+    if (!state.resumeOp || !state.resumePostIds) return;
+    let ids;
+    try { ids = JSON.parse(state.resumePostIds); } catch { clearResume(); updateReconnectBanner(); return; }
+
+    // If we already have the posts in memory, use them; otherwise ask user to fetch first
+    if (state.posts.length === 0) {
+      setStatus('Fetching library to restore session…');
+      await doFetch();
+      if (state.posts.length === 0) {
+        setStatus('Could not load library. Please click Fetch Library manually.', 'error');
+        return;
+      }
+    }
+
+    // Reconstruct item list from saved IDs (preserving original order)
+    const idSet = new Set(ids);
+    const allItems = state.posts.filter(p => idSet.has(p.id));
+    // Sort by saved ID order
+    const idOrder = new Map(ids.map((id, i) => [id, i]));
+    allItems.sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));
+
+    const startIndex = Math.max(0, state.resumeIndex);
+    const remaining = allItems.slice(startIndex);
+
+    if (remaining.length === 0) {
+      setStatus('Nothing left to resume — all items already processed.', 'success');
+      clearResume();
+      updateReconnectBanner();
+      return;
+    }
+
+    // Hide reconnect banner and run
+    document.getElementById('gid-reconnect-banner').classList.remove('visible');
+    setStatus(`Resuming ${state.resumeOp} from item ${startIndex + 1} of ${allItems.length}…`);
+
+    const op = state.resumeOp;
+    clearResume();
+
+    if (op === 'download') {
+      await doDownloadItems(remaining, allItems, startIndex);
+    } else if (op === 'unfavorite') {
+      await doUnfavorite(remaining);
+    } else if (op === 'both') {
+      await doDownloadAndUnfavoriteItems(remaining, allItems, startIndex);
+    }
+  }
+
   async function doFetch() {
     if (state.isFetching) return;
     state.isFetching = true;
@@ -1209,6 +1348,11 @@
       setStatus('No items to download. Fetch your library first.', 'warning');
       return;
     }
+    await doDownloadItems(items, items, 0);
+  }
+
+  async function doDownloadItems(items, allItems, startOffset) {
+    if (state.isDownloading) return;
     state.isDownloading = true;
     state.cancelRequested = false;
     state.downloadedCount = 0;
@@ -1216,17 +1360,27 @@
     setButtonsDisabled(true);
     setProgress(0, `0 / ${items.length}`);
     setStatus(`Downloading ${items.length} files…`);
+    saveResume('download', startOffset, allItems);
 
     for (let i = 0; i < items.length; i++) {
-      if (state.cancelRequested) { setStatus(`Cancelled after ${state.downloadedCount} downloads.`, 'warning'); break; }
+      if (state.cancelRequested) {
+        saveResume('download', startOffset + i, allItems);
+        setStatus(`Cancelled after ${state.downloadedCount} downloads. Reconnect to resume.`, 'warning');
+        updateReconnectBanner();
+        break;
+      }
       const ok = await downloadItem(items[i]);
       if (ok) state.downloadedCount++; else state.failedCount++;
       setProgress(((i + 1) / items.length) * 100, `${i + 1} / ${items.length} — ${state.downloadedCount} saved, ${state.failedCount} failed`);
       updateStat('downloaded', state.downloadedCount);
+      // Save checkpoint every 10 items
+      if (i % 10 === 9) saveResume('download', startOffset + i + 1, allItems);
       await sleep(DOWNLOAD_DELAY_MS);
     }
 
     if (!state.cancelRequested) {
+      clearResume();
+      updateReconnectBanner();
       setStatus(`Done! ${state.downloadedCount} downloaded${state.failedCount > 0 ? `, ${state.failedCount} failed` : ''}.`, state.failedCount > 0 ? 'warning' : 'success');
     }
     state.isDownloading = false;
@@ -1250,6 +1404,7 @@
     setButtonsDisabled(true);
     setProgress(0, `0 / ${items.length}`);
     setStatus(`Unfavoriting ${items.length} items…`);
+    if (!postsOverride) saveResume('unfavorite', 0, items);
 
     const seenPostIds = new Set();
     const uniquePosts = items.filter(item => {
@@ -1259,15 +1414,26 @@
     });
 
     for (let i = 0; i < uniquePosts.length; i++) {
-      if (state.cancelRequested) { setStatus(`Cancelled after ${state.unfavoritedCount} unfavorites.`, 'warning'); break; }
+      if (state.cancelRequested) {
+        if (!postsOverride) {
+          saveResume('unfavorite', i, items);
+          updateReconnectBanner();
+        }
+        setStatus(`Cancelled after ${state.unfavoritedCount} unfavorites. Reconnect to resume.`, 'warning');
+        break;
+      }
       const ok = await unlikePost(uniquePosts[i].postId);
       if (ok) state.unfavoritedCount++;
       setProgress(((i + 1) / uniquePosts.length) * 100, `${i + 1} / ${uniquePosts.length} — ${state.unfavoritedCount} removed`);
       updateStat('unfavorited', state.unfavoritedCount);
+      if (i % 10 === 9 && !postsOverride) saveResume('unfavorite', i + 1, items);
       await sleep(UNFAVORITE_DELAY_MS);
     }
 
-    if (!state.cancelRequested) setStatus(`Done! ${state.unfavoritedCount} items unfavorited.`, 'success');
+    if (!state.cancelRequested) {
+      if (!postsOverride) { clearResume(); updateReconnectBanner(); }
+      setStatus(`Done! ${state.unfavoritedCount} items unfavorited.`, 'success');
+    }
     state.isUnfavoriting = false;
     setButtonsDisabled(false);
     setTimeout(hideProgress, 3000);
@@ -1277,10 +1443,13 @@
     if (state.isDownloading || state.isUnfavoriting) return;
     const items = getActiveItems();
     if (items.length === 0) { setStatus('No items found. Fetch your library first.', 'warning'); return; }
-
     const confirmed = confirm(`Download ${items.length} items AND unfavorite them?\n\nFiles will be saved to: ${state.downloadFolder}/\nItems will be removed from your Grok favorites.\n\nProceed?`);
     if (!confirmed) return;
+    await doDownloadAndUnfavoriteItems(items, items, 0);
+  }
 
+  async function doDownloadAndUnfavoriteItems(items, allItems, startOffset) {
+    if (state.isDownloading || state.isUnfavoriting) return;
     state.isDownloading = true;
     state.cancelRequested = false;
     state.downloadedCount = 0;
@@ -1288,19 +1457,26 @@
     setButtonsDisabled(true);
     setProgress(0, `Downloading 0 / ${items.length}`);
     setStatus(`Downloading ${items.length} files…`);
+    saveResume('both', startOffset, allItems);
 
     for (let i = 0; i < items.length; i++) {
-      if (state.cancelRequested) break;
+      if (state.cancelRequested) {
+        saveResume('both', startOffset + i, allItems);
+        setStatus(`Cancelled. ${state.downloadedCount} downloaded. Reconnect to resume.`, 'warning');
+        updateReconnectBanner();
+        state.isDownloading = false;
+        setButtonsDisabled(false);
+        return;
+      }
       const ok = await downloadItem(items[i]);
       if (ok) state.downloadedCount++; else state.failedCount++;
       setProgress(((i + 1) / items.length) * 50, `Downloading ${i + 1} / ${items.length}`);
       updateStat('downloaded', state.downloadedCount);
+      if (i % 10 === 9) saveResume('both', startOffset + i + 1, allItems);
       await sleep(DOWNLOAD_DELAY_MS);
     }
 
     state.isDownloading = false;
-    if (state.cancelRequested) { setStatus(`Cancelled. ${state.downloadedCount} downloaded.`, 'warning'); setButtonsDisabled(false); return; }
-
     setStatus(`Downloads complete. Unfavoriting…`);
     state.isUnfavoriting = true;
     state.unfavoritedCount = 0;
@@ -1323,6 +1499,8 @@
 
     state.isUnfavoriting = false;
     setButtonsDisabled(false);
+    clearResume();
+    updateReconnectBanner();
     setStatus(`All done! ${state.downloadedCount} downloaded, ${state.unfavoritedCount} unfavorited.`, 'success');
     setTimeout(hideProgress, 4000);
   }
@@ -1364,11 +1542,18 @@
           <button class="gid-filter-btn" id="gid-filter-videos">Videos</button>
         </div>
 
-        <div class="gid-section-label">Download Folder</div>
+        <div class="gid-section-label">Destination Folder</div>
         <div class="gid-input-row">
-          <span class="gid-input-label">Subfolder:</span>
-          <input class="gid-input" id="gid-folder-input" type="text" value="${state.downloadFolder}" placeholder="grok-imagine" />
+          <span class="gid-input-label">Preset:</span>
+          <select class="gid-select" id="gid-folder-select">
+            ${FOLDER_PRESETS.map(p => `<option value="${p.value}"${(!FOLDER_PRESETS.find(x => x.value === state.downloadFolder) || state.downloadFolder === p.value) && !(p.value === '__custom__' && FOLDER_PRESETS.find(x => x.value === state.downloadFolder)) ? ' selected' : ''}>${p.label}</option>`).join('')}
+          </select>
         </div>
+        <div class="gid-input-row" id="gid-custom-folder-row" style="${FOLDER_PRESETS.find(p => p.value === state.downloadFolder) ? 'display:none' : ''}">
+          <span class="gid-input-label">Path:</span>
+          <input class="gid-input" id="gid-folder-input" type="text" value="${state.downloadFolder}" placeholder="e.g. grok-imagine/custom" />
+        </div>
+        <div style="font-size:11px;color:#475569;margin:-6px 0 8px;padding:0 2px">Saved inside your browser&#39;s Downloads folder.</div>
 
         <div class="gid-section-label">Batch Limit</div>
         <div class="gid-input-row">
@@ -1378,6 +1563,18 @@
         </div>
         <div style="font-size:11px;color:#475569;margin:-6px 0 8px;padding:0 2px">
           Leave blank to download everything. Max recommended: 6,000.
+        </div>
+
+        <!-- Reconnect Banner -->
+        <div class="gid-reconnect-banner" id="gid-reconnect-banner">
+          <div class="gid-reconnect-info">
+            <strong>↩ Interrupted session detected</strong>
+            <span id="gid-reconnect-desc">Resume previous operation?</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
+            <button class="gid-btn gid-btn-reconnect" id="gid-btn-reconnect" style="margin-bottom:0">Resume</button>
+            <button class="gid-btn gid-btn-secondary" id="gid-btn-reconnect-dismiss" style="margin-bottom:0;font-size:10px;padding:5px 10px">Dismiss</button>
+          </div>
         </div>
 
         <!-- Selection Banner -->
@@ -1451,9 +1648,44 @@
     document.getElementById('gid-close-btn').addEventListener('click', () => panel.classList.add('gid-hidden'));
     document.getElementById('gid-toggle-btn').addEventListener('click', () => panel.classList.toggle('gid-hidden'));
 
-    document.getElementById('gid-folder-input').addEventListener('input', e => {
+    // Folder preset dropdown
+    const folderSelect = document.getElementById('gid-folder-select');
+    const customFolderRow = document.getElementById('gid-custom-folder-row');
+    const folderInput = document.getElementById('gid-folder-input');
+
+    // Set initial dropdown selection
+    const isPreset = FOLDER_PRESETS.some(p => p.value !== '__custom__' && p.value === state.downloadFolder);
+    if (!isPreset) {
+      folderSelect.value = '__custom__';
+      customFolderRow.style.display = '';
+    } else {
+      folderSelect.value = state.downloadFolder;
+      customFolderRow.style.display = 'none';
+    }
+
+    folderSelect.addEventListener('change', e => {
+      const val = e.target.value;
+      if (val === '__custom__') {
+        customFolderRow.style.display = '';
+        folderInput.focus();
+      } else {
+        customFolderRow.style.display = 'none';
+        state.downloadFolder = val;
+        GM_setValue('downloadFolder', val);
+      }
+    });
+
+    folderInput.addEventListener('input', e => {
       state.downloadFolder = e.target.value.trim() || 'grok-imagine';
       GM_setValue('downloadFolder', state.downloadFolder);
+    });
+
+    // Reconnect banner
+    updateReconnectBanner();
+    document.getElementById('gid-btn-reconnect').addEventListener('click', doReconnect);
+    document.getElementById('gid-btn-reconnect-dismiss').addEventListener('click', () => {
+      clearResume();
+      updateReconnectBanner();
     });
 
     document.getElementById('gid-batch-input').addEventListener('input', e => {
