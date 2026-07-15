@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.4.0
+// @version      1.4.1
 // @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite them. Includes Dry Run mode, visual thumbnail picker with date-range filter, reconnect/resume after interruption, and destination folder presets.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/imagine*
@@ -23,7 +23,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.4.0';
+  const SCRIPT_VERSION = '1.4.1';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -1555,57 +1555,75 @@
   async function doDownloadAndUnfavoriteItems(items, allItems, startOffset) {
     if (state.isDownloading || state.isUnfavoriting) return;
     state.isDownloading = true;
+    state.isUnfavoriting = true;
     state.cancelRequested = false;
     state.downloadedCount = 0;
     state.failedCount = 0;
+    state.unfavoritedCount = 0;
     setButtonsDisabled(true);
-    setProgress(0, `Downloading 0 / ${items.length}`);
-    setStatus(`Downloading ${items.length} files…`);
     saveResume('both', startOffset, allItems);
+
+    // Group items by postId so we can unfavorite a post as soon as ALL its
+    // media files (variations) have been downloaded.
+    const postGroups = new Map(); // postId -> [item, ...]
+    for (const item of items) {
+      if (!postGroups.has(item.postId)) postGroups.set(item.postId, []);
+      postGroups.get(item.postId).push(item);
+    }
+
+    // Track which files per post have been downloaded
+    const postDownloaded = new Map(); // postId -> count of downloaded files
+    const postTotal = new Map();      // postId -> total files expected
+    for (const [pid, group] of postGroups) postTotal.set(pid, group.length);
+
+    const total = items.length;
+    let processed = 0;
 
     for (let i = 0; i < items.length; i++) {
       if (state.cancelRequested) {
         saveResume('both', startOffset + i, allItems);
-        setStatus(`Cancelled. ${state.downloadedCount} downloaded. Reconnect to resume.`, 'warning');
+        setStatus(`Cancelled. ${state.downloadedCount} downloaded, ${state.unfavoritedCount} unfavorited. Reconnect to resume.`, 'warning');
         updateReconnectBanner();
         state.isDownloading = false;
+        state.isUnfavoriting = false;
         setButtonsDisabled(false);
         return;
       }
-      const ok = await downloadItem(items[i]);
+
+      const item = items[i];
+      const ok = await downloadItem(item);
       if (ok) state.downloadedCount++; else state.failedCount++;
-      setProgress(((i + 1) / items.length) * 50, `Downloading ${i + 1} / ${items.length}`);
+      processed++;
+
+      // Track per-post download completion
+      const doneForPost = (postDownloaded.get(item.postId) || 0) + 1;
+      postDownloaded.set(item.postId, doneForPost);
+
+      // Unfavorite this post immediately once all its files are downloaded
+      if (doneForPost >= postTotal.get(item.postId)) {
+        const unlikeOk = await unlikePost(item.postId);
+        if (unlikeOk) state.unfavoritedCount++;
+        updateStat('unfavorited', state.unfavoritedCount);
+        await sleep(UNFAVORITE_DELAY_MS);
+      }
+
       updateStat('downloaded', state.downloadedCount);
+      setProgress(
+        (processed / total) * 100,
+        `${processed} / ${total} — ${state.downloadedCount} saved, ${state.unfavoritedCount} unfavorited`
+      );
+
+      // Checkpoint every 10 items
       if (i % 10 === 9) saveResume('both', startOffset + i + 1, allItems);
       await sleep(DOWNLOAD_DELAY_MS);
     }
 
     state.isDownloading = false;
-    setStatus(`Downloads complete. Unfavoriting…`);
-    state.isUnfavoriting = true;
-    state.unfavoritedCount = 0;
-
-    const seenPostIds = new Set();
-    const uniquePosts = items.filter(item => {
-      if (seenPostIds.has(item.postId)) return false;
-      seenPostIds.add(item.postId);
-      return true;
-    });
-
-    for (let i = 0; i < uniquePosts.length; i++) {
-      if (state.cancelRequested) break;
-      const ok = await unlikePost(uniquePosts[i].postId);
-      if (ok) state.unfavoritedCount++;
-      setProgress(50 + ((i + 1) / uniquePosts.length) * 50, `Unfavoriting ${i + 1} / ${uniquePosts.length}`);
-      updateStat('unfavorited', state.unfavoritedCount);
-      await sleep(UNFAVORITE_DELAY_MS);
-    }
-
     state.isUnfavoriting = false;
     setButtonsDisabled(false);
     clearResume();
     updateReconnectBanner();
-    setStatus(`All done! ${state.downloadedCount} downloaded, ${state.unfavoritedCount} unfavorited.`, 'success');
+    setStatus(`All done! ${state.downloadedCount} downloaded, ${state.unfavoritedCount} unfavorited${state.failedCount > 0 ? `, ${state.failedCount} failed` : ''}.`, state.failedCount > 0 ? 'warning' : 'success');
     setTimeout(hideProgress, 4000);
   }
 

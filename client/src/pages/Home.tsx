@@ -12,17 +12,26 @@ import { motion } from "framer-motion";
 const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/hero-bg-3WyWRMW5WZoB6TWmYp9h57.webp";
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.4.0";
+const SCRIPT_VERSION = "1.4.1";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.4.0",
+    version: "1.4.1",
     date: "Jul 2026",
     tag: "latest",
     tagColor: "#6366f1",
+    changes: [
+      { type: "improve", text: "Download + Unfavorite now unfavorites each post immediately after all its media files are downloaded, rather than waiting for the full download pass to complete. A cancelled or interrupted run leaves no partially-processed posts." },
+    ],
+  },
+  {
+    version: "1.4.0",
+    date: "Jul 2026",
+    tag: "previous",
+    tagColor: "#475569",
     changes: [
       { type: "new", text: "Date-range filter in the visual picker — set a From and To date to instantly narrow the thumbnail grid to a specific time window. Item count updates live. Filters reset each time the picker opens." },
       { type: "improve", text: "Picker filters (type, search, date range) all compose together — only items matching every active filter are shown and eligible for Select All." },
