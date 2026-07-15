@@ -12,14 +12,14 @@ import { motion } from "framer-motion";
 const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/hero-bg-3WyWRMW5WZoB6TWmYp9h57.webp";
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.1.4";
+const SCRIPT_VERSION = "1.0.4";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.1.4",
+    version: "1.0.4",
     date: "Jul 2026",
     tag: "latest",
     tagColor: "#6366f1",
@@ -28,7 +28,7 @@ const changelog = [
     ],
   },
   {
-    version: "1.1.3",
+    version: "1.0.3",
     date: "Jul 2026",
     tag: "previous",
     tagColor: "#475569",
@@ -38,7 +38,7 @@ const changelog = [
     ],
   },
   {
-    version: "1.1.2",
+    version: "1.0.2",
     date: "Jul 2026",
     tag: "previous",
     tagColor: "#475569",
@@ -49,7 +49,7 @@ const changelog = [
     ],
   },
   {
-    version: "1.1.1",
+    version: "1.0.1",
     date: "May 2026",
     tag: "older",
     tagColor: "#334155",
@@ -59,7 +59,7 @@ const changelog = [
     ],
   },
   {
-    version: "1.1.0",
+    version: "1.0.0-rc",
     date: "May 2026",
     tag: "older",
     tagColor: "#334155",
@@ -71,7 +71,7 @@ const changelog = [
     ],
   },
   {
-    version: "1.0.2",
+    version: "1.0.0-beta",
     date: "May 2026",
     tag: "older",
     tagColor: "#334155",
@@ -83,7 +83,7 @@ const changelog = [
     ],
   },
   {
-    version: "1.0.1",
+    version: "1.0.0",
     date: "May 2026",
     tag: "initial",
     tagColor: "#334155",

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.1.4
+// @version      1.0.4
 // @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite them. Includes Dry Run mode, visual thumbnail picker with date-range filter, reconnect/resume after interruption, and destination folder presets.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/imagine*
@@ -23,7 +23,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.1.4';
+  const SCRIPT_VERSION = '1.0.4';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
