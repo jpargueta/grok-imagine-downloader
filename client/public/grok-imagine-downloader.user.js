@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.3.0
-// @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite them. Includes Dry Run mode, visual thumbnail picker, reconnect/resume after interruption, and destination folder presets.
+// @version      1.4.0
+// @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite them. Includes Dry Run mode, visual thumbnail picker with date-range filter, reconnect/resume after interruption, and destination folder presets.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/imagine*
 // @icon         https://grok.com/favicon.ico
@@ -23,7 +23,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.3.0';
+  const SCRIPT_VERSION = '1.4.0';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -584,6 +584,55 @@
     }
     .gid-picker-search:focus { border-color: rgba(59,130,246,0.5); }
     .gid-picker-search::placeholder { color: #334155; }
+    .gid-picker-date-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 20px 8px;
+      background: rgba(8,12,24,0.4);
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .gid-picker-date-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #475569;
+      white-space: nowrap;
+    }
+    .gid-picker-date-input {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 7px;
+      padding: 5px 8px;
+      font-size: 12px;
+      color: #e2e8f0;
+      outline: none;
+      transition: border-color 0.15s;
+      color-scheme: dark;
+    }
+    .gid-picker-date-input:focus { border-color: rgba(59,130,246,0.5); }
+    .gid-picker-date-sep { font-size: 11px; color: #475569; }
+    .gid-picker-date-clear {
+      padding: 4px 10px;
+      font-size: 10px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.04);
+      color: #64748b;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .gid-picker-date-clear:hover { background: rgba(255,255,255,0.1); color: #94a3b8; }
+    .gid-picker-date-count {
+      font-size: 10px;
+      color: #475569;
+      margin-left: auto;
+    }
 
     #gid-picker-grid {
       flex: 1;
@@ -1001,6 +1050,15 @@
   // ─── Picker Modal ─────────────────────────────────────────────────────────
   let pickerSearchTerm = '';
   let pickerFilterType = 'all';
+  let pickerDateFrom = '';  // ISO date string YYYY-MM-DD or ''
+  let pickerDateTo   = '';  // ISO date string YYYY-MM-DD or ''
+
+  function resetPickerFilters() {
+    pickerSearchTerm = '';
+    pickerFilterType = 'all';
+    pickerDateFrom = '';
+    pickerDateTo = '';
+  }
 
   function buildPickerOverlay() {
     const overlay = document.createElement('div');
@@ -1021,6 +1079,14 @@
         <input class="gid-picker-search" id="gid-picker-search" type="text" placeholder="Search by prompt…" />
         <button class="gid-picker-toolbar-btn" id="gid-picker-select-all">Select All</button>
         <button class="gid-picker-toolbar-btn" id="gid-picker-select-none">Clear</button>
+      </div>
+      <div class="gid-picker-date-row">
+        <span class="gid-picker-date-label">Date range:</span>
+        <input class="gid-picker-date-input" id="gid-picker-date-from" type="date" title="From date" />
+        <span class="gid-picker-date-sep">→</span>
+        <input class="gid-picker-date-input" id="gid-picker-date-to" type="date" title="To date" />
+        <button class="gid-picker-date-clear" id="gid-picker-date-clear">Clear dates</button>
+        <span class="gid-picker-date-count" id="gid-picker-date-count"></span>
       </div>
 
       <div id="gid-picker-grid">
@@ -1049,6 +1115,22 @@
 
     document.getElementById('gid-picker-search').addEventListener('input', e => {
       pickerSearchTerm = e.target.value.toLowerCase();
+      renderPickerGrid();
+    });
+
+    document.getElementById('gid-picker-date-from').addEventListener('change', e => {
+      pickerDateFrom = e.target.value;  // YYYY-MM-DD or ''
+      renderPickerGrid();
+    });
+    document.getElementById('gid-picker-date-to').addEventListener('change', e => {
+      pickerDateTo = e.target.value;
+      renderPickerGrid();
+    });
+    document.getElementById('gid-picker-date-clear').addEventListener('click', () => {
+      pickerDateFrom = '';
+      pickerDateTo = '';
+      document.getElementById('gid-picker-date-from').value = '';
+      document.getElementById('gid-picker-date-to').value = '';
       renderPickerGrid();
     });
 
@@ -1082,10 +1164,19 @@
   }
 
   function getPickerVisibleItems() {
+    const fromMs = pickerDateFrom ? new Date(pickerDateFrom + 'T00:00:00').getTime() : null;
+    // To-date is inclusive of the full day
+    const toMs   = pickerDateTo   ? new Date(pickerDateTo   + 'T23:59:59').getTime() : null;
     return state.posts.filter(item => {
       if (pickerFilterType === 'images' && item.isVideo) return false;
       if (pickerFilterType === 'videos' && !item.isVideo) return false;
       if (pickerSearchTerm && !item.prompt.toLowerCase().includes(pickerSearchTerm)) return false;
+      if (fromMs !== null || toMs !== null) {
+        // createTime is a Unix timestamp in seconds (from Grok API)
+        const itemMs = item.createTime ? item.createTime * 1000 : 0;
+        if (fromMs !== null && itemMs < fromMs) return false;
+        if (toMs   !== null && itemMs > toMs)   return false;
+      }
       return true;
     });
   }
@@ -1096,6 +1187,16 @@
     if (!grid) return;
 
     const items = getPickerVisibleItems();
+
+    // Update date-range count badge
+    const dateCountEl = document.getElementById('gid-picker-date-count');
+    if (dateCountEl) {
+      if (pickerDateFrom || pickerDateTo) {
+        dateCountEl.textContent = `${items.length} item${items.length !== 1 ? 's' : ''} in range`;
+      } else {
+        dateCountEl.textContent = '';
+      }
+    }
 
     // Remove existing thumbs
     grid.querySelectorAll('.gid-thumb').forEach(el => el.remove());
@@ -1165,8 +1266,7 @@
       setStatus('Fetch your library first before picking items.', 'warning');
       return;
     }
-    pickerSearchTerm = '';
-    pickerFilterType = 'all';
+    resetPickerFilters();
     const overlay = document.getElementById('gid-picker-overlay');
     if (!overlay) return;
 
@@ -1178,6 +1278,10 @@
     document.getElementById('gid-picker-filter-all').classList.add('active');
     const searchEl = document.getElementById('gid-picker-search');
     if (searchEl) searchEl.value = '';
+    const dateFrom = document.getElementById('gid-picker-date-from');
+    const dateTo   = document.getElementById('gid-picker-date-to');
+    if (dateFrom) dateFrom.value = '';
+    if (dateTo)   dateTo.value   = '';
 
     renderPickerGrid();
     overlay.classList.add('visible');

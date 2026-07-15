@@ -12,17 +12,27 @@ import { motion } from "framer-motion";
 const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/hero-bg-3WyWRMW5WZoB6TWmYp9h57.webp";
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.3.0";
+const SCRIPT_VERSION = "1.4.0";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.3.0",
+    version: "1.4.0",
     date: "Jul 2026",
     tag: "latest",
     tagColor: "#6366f1",
+    changes: [
+      { type: "new", text: "Date-range filter in the visual picker — set a From and To date to instantly narrow the thumbnail grid to a specific time window. Item count updates live. Filters reset each time the picker opens." },
+      { type: "improve", text: "Picker filters (type, search, date range) all compose together — only items matching every active filter are shown and eligible for Select All." },
+    ],
+  },
+  {
+    version: "1.3.0",
+    date: "Jul 2026",
+    tag: "previous",
+    tagColor: "#475569",
     changes: [
       { type: "new", text: "Reconnect & Resume — if a download or unfavorite is interrupted (network drop, browser close, or cancel), a green banner appears on next load showing how many items remain. One click picks up exactly where it left off." },
       { type: "new", text: "Destination Folder dropdown — choose from preset subfolder paths (grok-imagine, images, videos, batch-1/2/3) or select \"Custom\" to type any path. Saved across sessions." },
@@ -32,8 +42,8 @@ const changelog = [
   {
     version: "1.2.1",
     date: "May 2026",
-    tag: "previous",
-    tagColor: "#475569",
+    tag: "older",
+    tagColor: "#334155",
     changes: [
       { type: "new", text: "Batch Limit field — set a maximum number of files to process per operation (blank = no limit, max recommended 6,000). Persisted across sessions." },
       { type: "improve", text: "Batch limit applies uniformly to all modes: download, unfavorite, dry run, and picker selection." },
