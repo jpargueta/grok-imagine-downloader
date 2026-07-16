@@ -12,6 +12,7 @@ import { motion } from "framer-motion";
 const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/hero-bg-3WyWRMW5WZoB6TWmYp9h57.webp";
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
+const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_VERSION = "1.0.5";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
@@ -466,22 +467,42 @@ export default function Home() {
               v{SCRIPT_VERSION}
             </span>
           </div>
-          <a
-            href={SCRIPT_URL}
-            style={{
-              background: "linear-gradient(135deg, #3b82f6, #6366f1)",
-              color: "white",
-              padding: "8px 20px",
-              borderRadius: 8,
-              fontSize: 13,
-              fontWeight: 600,
-              textDecoration: "none",
-              boxShadow: "0 4px 14px rgba(59,130,246,0.35)",
-              transition: "all 0.15s",
-            }}
-          >
-            Install Script
-          </a>
+          <div className="flex" style={{ gap: 8 }}>
+            <a
+              href={SCRIPT_URL}
+              style={{
+                background: "linear-gradient(135deg, #3b82f6, #6366f1)",
+                color: "white",
+                padding: "8px 20px",
+                borderRadius: 8,
+                fontSize: 13,
+                fontWeight: 600,
+                textDecoration: "none",
+                boxShadow: "0 4px 14px rgba(59,130,246,0.35)",
+                transition: "all 0.15s",
+              }}
+            >
+              Install Script
+            </a>
+            <a
+              href={SCRIPT_UPDATE_URL}
+              title="Already installed? Click to update to the latest version"
+              style={{
+                background: "rgba(99,102,241,0.12)",
+                border: "1px solid rgba(99,102,241,0.35)",
+                color: "#a5b4fc",
+                padding: "8px 16px",
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 600,
+                textDecoration: "none",
+                transition: "all 0.15s",
+                whiteSpace: "nowrap" as const,
+              }}
+            >
+              ↑ Update
+            </a>
+          </div>
         </nav>
 
         {/* Hero Content */}
@@ -568,6 +589,27 @@ export default function Home() {
                 }}
               >
                 ⬇ Install Script
+              </a>
+              <a
+                href={SCRIPT_UPDATE_URL}
+                title="Already installed? Opens the script directly so Tampermonkey shows the update prompt"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: "rgba(99,102,241,0.1)",
+                  border: "1px solid rgba(99,102,241,0.35)",
+                  color: "#a5b4fc",
+                  padding: "14px 24px",
+                  borderRadius: 12,
+                  fontSize: 15,
+                  fontWeight: 600,
+                  textDecoration: "none",
+                  transition: "all 0.2s",
+                  letterSpacing: "0.01em",
+                }}
+              >
+                ↑ Update to v{SCRIPT_VERSION}
               </a>
               <button
                 onClick={handleCopy}
