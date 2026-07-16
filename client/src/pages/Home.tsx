@@ -12,17 +12,29 @@ import { motion } from "framer-motion";
 const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/hero-bg-3WyWRMW5WZoB6TWmYp9h57.webp";
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.4";
+const SCRIPT_VERSION = "1.0.5";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.4",
+    version: "1.0.5",
     date: "Jul 2026",
     tag: "latest",
     tagColor: "#6366f1",
+    changes: [
+      { type: "new", text: "Library Source toggle — switch between \"Favorites only\" (Imagine liked posts) and \"All posts\" mode, which fetches every image and video Grok has ever generated for your account including conversation/agent-created items." },
+      { type: "new", text: "Hard delete support for All Posts mode — agent-created items that can't be unliked are permanently removed via the /rest/media/post/delete endpoint, with a fallback to unlike if delete is unavailable." },
+      { type: "improve", text: "Script now runs on all grok.com pages (not just /imagine/*) so the panel is available wherever Grok is open." },
+      { type: "improve", text: "Action button labels, stat counter, and progress messages dynamically update to say \"Delete\" vs \"Unfavorite\" based on the active source mode." },
+    ],
+  },
+  {
+    version: "1.0.4",
+    date: "Jul 2026",
+    tag: "previous",
+    tagColor: "#475569",
     changes: [
       { type: "improve", text: "Download + Unfavorite now unfavorites each post immediately after all its media files are downloaded, rather than waiting for the full download pass to complete. A cancelled or interrupted run leaves no partially-processed posts." },
     ],

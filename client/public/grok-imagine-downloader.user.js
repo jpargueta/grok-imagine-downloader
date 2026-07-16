@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.4
-// @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite them. Includes Dry Run mode, visual thumbnail picker with date-range filter, reconnect/resume after interruption, and destination folder presets.
+// @version      1.0.5
+// @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite/delete them. Includes source mode (favorites or all posts including agent/conversation-created), Dry Run mode, visual thumbnail picker with date-range filter, reconnect/resume after interruption, and destination folder presets.
 // @author       Grok Imagine Downloader
-// @match        https://grok.com/imagine*
+// @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
 // @grant        GM_download
 // @grant        GM_xmlhttpRequest
@@ -23,11 +23,20 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.4';
+  const SCRIPT_VERSION = '1.0.5';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
+    DELETE: 'https://grok.com/rest/media/post/delete',
   };
+
+  // Source modes
+  // 'favorites' = MEDIA_POST_SOURCE_LIKED (only liked/favorited Imagine posts)
+  // 'all'       = no source filter (all posts: Imagine + agent/conversation-created)
+  const SOURCE_MODES = [
+    { value: 'favorites', label: '⭐ Favorites only (Imagine)', desc: 'Only liked/saved Imagine creations.' },
+    { value: 'all',       label: '🌐 All posts (incl. agent-created)', desc: 'All images/videos Grok ever created for you — Imagine + conversations.' },
+  ];
   const PAGE_SIZE = 40;
   const DOWNLOAD_DELAY_MS = 350;
   const UNFAVORITE_DELAY_MS = 200;
@@ -57,6 +66,7 @@
     dryRunItems: [],
     downloadFolder: GM_getValue('downloadFolder', 'grok-imagine'),
     batchLimit: GM_getValue('batchLimit', 0),   // 0 = no limit (all)
+    sourceMode: GM_getValue('sourceMode', 'favorites'), // 'favorites' | 'all'
     filterType: 'all',
     dryRunMode: GM_getValue('dryRunMode', false),
     // Resume / reconnect state
@@ -830,7 +840,11 @@
 
     while (true) {
       if (state.cancelRequested) break;
-      const body = { limit: PAGE_SIZE, filter: { source: 'MEDIA_POST_SOURCE_LIKED', safeForWork: false } };
+      // Build filter based on source mode
+      const filter = { safeForWork: false };
+      if (state.sourceMode === 'favorites') filter.source = 'MEDIA_POST_SOURCE_LIKED';
+      // In 'all' mode, omit source filter to get all posts (Imagine + agent-created)
+      const body = { limit: PAGE_SIZE, filter };
       if (cursor) body.cursor = String(cursor);
 
       let data;
@@ -887,6 +901,26 @@
       const res = await apiPost(API.UNLIKE, { id: postId });
       return res && (res.success !== false);
     } catch { return false; }
+  }
+
+  // Hard-delete a post (works for agent-created items that can't be unliked)
+  async function deletePost(postId) {
+    try {
+      const res = await apiPost(API.DELETE, { id: postId });
+      return res && (res.success !== false);
+    } catch { return false; }
+  }
+
+  // Remove a post: tries unlike first; if that fails (e.g. agent post), tries delete
+  async function removePost(postId) {
+    if (state.sourceMode === 'all') {
+      // For all-posts mode, use delete which works for both liked and agent-created posts
+      const ok = await deletePost(postId);
+      if (ok) return true;
+      // Fallback to unlike in case delete endpoint isn't available
+      return await unlikePost(postId);
+    }
+    return await unlikePost(postId);
   }
 
   // ─── Download ─────────────────────────────────────────────────────────────
@@ -966,16 +1000,18 @@
       const unfavBtn = document.getElementById('gid-btn-unfavorite');
       const bothBtn = document.getElementById('gid-btn-both');
       if (dlBtn) dlBtn.textContent = `⬇ Download Selected (${state.selectedIds.size})`;
-      if (unfavBtn) unfavBtn.textContent = `🗑 Unfavorite Selected (${state.selectedIds.size})`;
-      if (bothBtn) bothBtn.textContent = `⬇🗑 Download + Unfavorite Selected (${state.selectedIds.size})`;
+      const removeLabel = state.sourceMode === 'all' ? 'Delete' : 'Unfavorite';
+      if (unfavBtn) unfavBtn.textContent = `🗑 ${removeLabel} Selected (${state.selectedIds.size})`;
+      if (bothBtn) bothBtn.textContent = `⬇🗑 Download + ${removeLabel} Selected (${state.selectedIds.size})`;
     } else {
       banner.classList.remove('visible');
       const dlBtn = document.getElementById('gid-btn-download');
       const unfavBtn = document.getElementById('gid-btn-unfavorite');
       const bothBtn = document.getElementById('gid-btn-both');
       if (dlBtn) dlBtn.textContent = '⬇ Download All';
-      if (unfavBtn) unfavBtn.textContent = '🗑 Unfavorite All (Remove from Server)';
-      if (bothBtn) bothBtn.textContent = '⬇🗑 Download + Unfavorite All';
+      const removeLabel2 = state.sourceMode === 'all' ? 'Delete' : 'Unfavorite';
+      if (unfavBtn) unfavBtn.textContent = `🗑 ${removeLabel2} All (Remove from Server)`;
+      if (bothBtn) bothBtn.textContent = `⬇🗑 Download + ${removeLabel2} All`;
     }
   }
 
@@ -1526,7 +1562,7 @@
         setStatus(`Cancelled after ${state.unfavoritedCount} unfavorites. Reconnect to resume.`, 'warning');
         break;
       }
-      const ok = await unlikePost(uniquePosts[i].postId);
+      const ok = await removePost(uniquePosts[i].postId);
       if (ok) state.unfavoritedCount++;
       setProgress(((i + 1) / uniquePosts.length) * 100, `${i + 1} / ${uniquePosts.length} — ${state.unfavoritedCount} removed`);
       updateStat('unfavorited', state.unfavoritedCount);
@@ -1601,16 +1637,17 @@
 
       // Unfavorite this post immediately once all its files are downloaded
       if (doneForPost >= postTotal.get(item.postId)) {
-        const unlikeOk = await unlikePost(item.postId);
-        if (unlikeOk) state.unfavoritedCount++;
+        const removeOk = await removePost(item.postId);
+        if (removeOk) state.unfavoritedCount++;
         updateStat('unfavorited', state.unfavoritedCount);
         await sleep(UNFAVORITE_DELAY_MS);
       }
 
       updateStat('downloaded', state.downloadedCount);
+      const removeWord = state.sourceMode === 'all' ? 'deleted' : 'unfavorited';
       setProgress(
         (processed / total) * 100,
-        `${processed} / ${total} — ${state.downloadedCount} saved, ${state.unfavoritedCount} unfavorited`
+        `${processed} / ${total} — ${state.downloadedCount} saved, ${state.unfavoritedCount} ${removeWord}`
       );
 
       // Checkpoint every 10 items
@@ -1623,7 +1660,8 @@
     setButtonsDisabled(false);
     clearResume();
     updateReconnectBanner();
-    setStatus(`All done! ${state.downloadedCount} downloaded, ${state.unfavoritedCount} unfavorited${state.failedCount > 0 ? `, ${state.failedCount} failed` : ''}.`, state.failedCount > 0 ? 'warning' : 'success');
+    const removeWordFinal = state.sourceMode === 'all' ? 'deleted' : 'unfavorited';
+    setStatus(`All done! ${state.downloadedCount} downloaded, ${state.unfavoritedCount} ${removeWordFinal}${state.failedCount > 0 ? `, ${state.failedCount} failed` : ''}.`, state.failedCount > 0 ? 'warning' : 'success');
     setTimeout(hideProgress, 4000);
   }
 
@@ -1653,9 +1691,23 @@
           </div>
           <div class="gid-stat">
             <div class="gid-stat-value" id="gid-stat-unfavorited" style="color:#f87171">—</div>
-            <div class="gid-stat-label">UNFAVORITED</div>
+            <div class="gid-stat-label" id="gid-stat-removed-label">UNFAVORITED</div>
           </div>
         </div>
+
+        <div class="gid-section-label">Library Source</div>
+        <div class="gid-input-row" style="flex-direction:column;gap:6px;align-items:stretch">
+          ${SOURCE_MODES.map(m => `
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:7px 10px;border-radius:8px;border:1px solid ${state.sourceMode===m.value ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.07)'};background:${state.sourceMode===m.value ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.02)'}">
+              <input type="radio" name="gid-source-mode" value="${m.value}" ${state.sourceMode===m.value ? 'checked' : ''} style="margin-top:2px;accent-color:#6366f1" />
+              <div>
+                <div style="font-size:12px;font-weight:600;color:#e2e8f0">${m.label}</div>
+                <div style="font-size:10px;color:#64748b;margin-top:2px">${m.desc}</div>
+              </div>
+            </label>
+          `).join('')}
+        </div>
+        <div style="font-size:11px;color:#475569;margin:-4px 0 10px;padding:0 2px">⚠️ <strong style="color:#fbbf24">All posts</strong> mode uses a hard delete — items are permanently removed from Grok's servers.</div>
 
         <div class="gid-section-label">Filter (applies when no selection active)</div>
         <div class="gid-filter-row">
@@ -1816,6 +1868,40 @@
       GM_setValue('batchLimit', state.batchLimit);
       // clamp displayed value to 6000 if user types higher
       if (!isNaN(val) && val > 6000) e.target.value = 6000;
+    });
+
+    // Source mode radio buttons
+    document.querySelectorAll('input[name="gid-source-mode"]').forEach(radio => {
+      radio.addEventListener('change', e => {
+        state.sourceMode = e.target.value;
+        GM_setValue('sourceMode', state.sourceMode);
+        // Update stat label
+        const statLabel = document.getElementById('gid-stat-removed-label');
+        if (statLabel) statLabel.textContent = state.sourceMode === 'all' ? 'DELETED' : 'UNFAVORITED';
+        // Update action button labels
+        updateSelectionBanner();
+        // Reset library — different source may have different posts
+        state.posts = [];
+        state.selectedIds.clear();
+        state.useSelection = false;
+        updateStat('total', '—');
+        updateStat('downloaded', '—');
+        updateStat('unfavorited', '—');
+        const fetchMode = state.sourceMode === 'all' ? 'all posts (Imagine + agent-created)' : 'favorites';
+        setStatus(`Source changed to ${fetchMode}. Fetch your library to continue.`);
+        ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.disabled = true;
+        });
+        // Update radio label styles
+        document.querySelectorAll('input[name="gid-source-mode"]').forEach(r => {
+          const lbl = r.closest('label');
+          if (!lbl) return;
+          const isSelected = r.value === state.sourceMode;
+          lbl.style.borderColor = isSelected ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.07)';
+          lbl.style.background = isSelected ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.02)';
+        });
+      });
     });
 
     // Filter buttons
