@@ -13,22 +13,33 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.5";
+const SCRIPT_VERSION = "1.0.6";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.5",
-    date: "Jul 2026",
+    version: "1.0.6",
+    date: "Aug 2026",
     tag: "latest",
     tagColor: "#6366f1",
     changes: [
-      { type: "new", text: "Library Source toggle — switch between \"Favorites only\" (Imagine liked posts) and \"All posts\" mode, which fetches every image and video Grok has ever generated for your account including conversation/agent-created items." },
-      { type: "new", text: "Hard delete support for All Posts mode — agent-created items that can't be unliked are permanently removed via the /rest/media/post/delete endpoint, with a fallback to unlike if delete is unavailable." },
-      { type: "improve", text: "Script now runs on all grok.com pages (not just /imagine/*) so the panel is available wherever Grok is open." },
-      { type: "improve", text: "Action button labels, stat counter, and progress messages dynamically update to say \"Delete\" vs \"Unfavorite\" based on the active source mode." },
+      { type: "new", text: "Multi-strategy delete subsystem — Grok removed the favorites button, so deletion now cascades: (1) API unlike, (2) API delete with captured session headers, (3) DOM-click fallback that navigates to each post page and clicks More options → Delete post → Confirm." },
+      { type: "new", text: "Delete Method selector — choose between Auto (API → DOM fallback) and DOM click only (most reliable). DOM mode keeps the tab active and works even if Grok changes its API." },
+      { type: "new", text: "Fetch-header interceptor — the script captures Grok's own auth/CSRF headers (x-csrf-token, baggage, sentry-trace) from outbound requests and forwards them with every delete call, maximizing API acceptance." },
+      { type: "improve", text: "Script now runs at document-start so the fetch interceptor is installed before any Grok page scripts run, ensuring headers are captured from the very first request." },
+    ],
+  },
+  {
+    version: "1.0.5",
+    date: "Jul 2026",
+    tag: "previous",
+    tagColor: "#475569",
+    changes: [
+      { type: "new", text: "Library Source toggle — Favorites only vs All posts (including agent/conversation-created items)." },
+      { type: "new", text: "Hard delete support for All Posts mode via /rest/media/post/delete endpoint." },
+      { type: "improve", text: "Script now matches all grok.com pages. Action labels update dynamically for delete vs unfavorite mode." },
     ],
   },
   {

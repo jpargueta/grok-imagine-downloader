@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.5
+// @version      1.0.6
 // @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite/delete them. Includes source mode (favorites or all posts including agent/conversation-created), Dry Run mode, visual thumbnail picker with date-range filter, reconnect/resume after interruption, and destination folder presets.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
@@ -15,7 +15,7 @@
 // @connect      assets.grok.com
 // @connect      imagine-public.x.ai
 // @connect      *
-// @run-at       document-idle
+// @run-at       document-start
 // @license      MIT
 // ==/UserScript==
 
@@ -23,7 +23,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.5';
+  const SCRIPT_VERSION = '1.0.6';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -40,6 +40,12 @@
   const PAGE_SIZE = 40;
   const DOWNLOAD_DELAY_MS = 350;
   const UNFAVORITE_DELAY_MS = 200;
+
+  // Delete modes for the remove subsystem
+  const DELETE_MODES = [
+    { value: 'auto', label: 'Auto (API \u2192 DOM fallback)', desc: 'Tries the API first; falls back to DOM-click if the endpoint rejects the request.' },
+    { value: 'dom',  label: 'DOM click only (most reliable)', desc: 'Navigates to each post page and clicks the Delete button. Slower but always works.' },
+  ];
 
   const FOLDER_PRESETS = [
     { label: 'grok-imagine (default)', value: 'grok-imagine' },
@@ -67,13 +73,45 @@
     downloadFolder: GM_getValue('downloadFolder', 'grok-imagine'),
     batchLimit: GM_getValue('batchLimit', 0),   // 0 = no limit (all)
     sourceMode: GM_getValue('sourceMode', 'favorites'), // 'favorites' | 'all'
+    deleteMode: GM_getValue('deleteMode', 'auto'),       // 'auto' | 'dom'
     filterType: 'all',
+    capturedHeaders: {},  // headers intercepted from Grok's own fetch calls
     dryRunMode: GM_getValue('dryRunMode', false),
-    // Resume / reconnect state
-    resumeOp: GM_getValue('resumeOp', null),       // 'download' | 'unfavorite' | 'both'
-    resumeIndex: GM_getValue('resumeIndex', 0),    // next item index to process
-    resumePostIds: GM_getValue('resumePostIds', null), // JSON array of post IDs
   };
+
+  // ─── Fetch-header intercept ───────────────────────────────────────────────
+  // Wraps window.fetch to capture auth/csrf headers from Grok's own requests.
+  // These are forwarded with GM_xmlhttpRequest delete calls so the server
+  // accepts them as legitimate same-origin requests.
+  // NOTE: run-at document-start means window.fetch exists before page scripts run.
+  (function installFetchInterceptor() {
+    const CAPTURE_KEYS = ['x-csrf-token','baggage','sentry-trace','x-request-id','authorization','x-transaction-id'];
+    const origFetch = window.fetch.bind(window);
+    window.fetch = function(input, init) {
+      try {
+        const url = typeof input === 'string' ? input : (input instanceof Request ? input.url : String(input));
+        if (url.includes('grok.com/rest/')) {
+          const hdrs = init && init.headers
+            ? (init.headers instanceof Headers
+                ? Object.fromEntries(init.headers.entries())
+                : (Array.isArray(init.headers)
+                    ? Object.fromEntries(init.headers)
+                    : { ...init.headers }))
+            : {};
+          CAPTURE_KEYS.forEach(k => {
+            const v = hdrs[k] || hdrs[k.toLowerCase()];
+            if (v) state.capturedHeaders[k] = v;
+          });
+        }
+      } catch (_) {}
+      return origFetch(input, init);
+    };
+  })();
+
+  // ─── Resume / reconnect state (part of state object, kept separate for clarity) ──
+  state.resumeOp       = GM_getValue('resumeOp', null);
+  state.resumeIndex    = GM_getValue('resumeIndex', 0);
+  state.resumePostIds  = GM_getValue('resumePostIds', null);
 
   // ─── Styles ───────────────────────────────────────────────────────────────
   GM_addStyle(`
@@ -831,6 +869,33 @@
     });
   }
 
+  // apiPostWithHeaders — like apiPost but forwards captured Grok session headers
+  function apiPostWithHeaders(url, body) {
+    return new Promise((resolve, reject) => {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...state.capturedHeaders,
+      };
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url,
+        headers,
+        data: JSON.stringify(body),
+        withCredentials: true,
+        onload: res => {
+          if (res.status >= 200 && res.status < 300) {
+            try { resolve(JSON.parse(res.responseText)); }
+            catch { resolve({ success: true }); }
+          } else {
+            reject(new Error(`HTTP ${res.status}`));
+          }
+        },
+        onerror: () => reject(new Error('Network error')),
+        ontimeout: () => reject(new Error('Timeout')),
+      });
+    });
+  }
+
   async function fetchAllPosts() {
     const allMedia = [];
     let cursor = null;
@@ -896,31 +961,113 @@
     return allMedia;
   }
 
+  // ─── Remove subsystem ────────────────────────────────────────────────────
+  // Strategy 1: unlike (favorites mode — old liked posts)
   async function unlikePost(postId) {
     try {
-      const res = await apiPost(API.UNLIKE, { id: postId });
+      const res = await apiPostWithHeaders(API.UNLIKE, { id: postId });
       return res && (res.success !== false);
     } catch { return false; }
   }
 
-  // Hard-delete a post (works for agent-created items that can't be unliked)
-  async function deletePost(postId) {
+  // Strategy 2: API delete with captured headers
+  async function apiDeletePost(postId) {
     try {
-      const res = await apiPost(API.DELETE, { id: postId });
+      const res = await apiPostWithHeaders(API.DELETE, { id: postId });
       return res && (res.success !== false);
     } catch { return false; }
   }
 
-  // Remove a post: tries unlike first; if that fails (e.g. agent post), tries delete
+  // Strategy 3: DOM-click delete — navigates to the post page and clicks through
+  // the More options → Delete post → Confirm dialog sequence.
+  async function domClickDeletePost(postId) {
+    const postUrl = `https://grok.com/imagine/post/${postId}`;
+    return new Promise(resolve => {
+      window.location.href = postUrl;
+      let attempts = 0;
+      const MAX_ATTEMPTS = 30; // 30 * 400ms = 12s max wait
+      const POLL_MS = 400;
+
+      function realisticClick(el) {
+        if (!el) return false;
+        try {
+          el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+          el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+          el.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true }));
+          el.dispatchEvent(new MouseEvent('click',     { bubbles: true }));
+          return true;
+        } catch { return false; }
+      }
+
+      async function tryDelete() {
+        attempts++;
+        if (attempts > MAX_ATTEMPTS) { resolve(false); return; }
+
+        // Step 1: find "More options" button
+        const moreBtn = document.querySelector(
+          'button[aria-label="More options"], button[aria-label="more options"], button[aria-label="Options"]'
+        );
+        if (!moreBtn) { setTimeout(tryDelete, POLL_MS); return; }
+        realisticClick(moreBtn);
+        await new Promise(r => setTimeout(r, 300));
+
+        // Step 2: find "Delete post" menu item
+        let deleteItem = null;
+        document.querySelectorAll('[role="menuitem"], [role="option"], button, li').forEach(el => {
+          const t = el.textContent.trim().toLowerCase();
+          if (t === 'delete post' || t === 'delete' || t === 'remove post') deleteItem = el;
+        });
+        if (!deleteItem) { setTimeout(tryDelete, POLL_MS); return; }
+        realisticClick(deleteItem);
+        await new Promise(r => setTimeout(r, 300));
+
+        // Step 3: find red confirmation button
+        let confirmBtn = null;
+        document.querySelectorAll('button').forEach(btn => {
+          const txt = btn.textContent.trim().toLowerCase();
+          const isRed = btn.classList.contains('text-red-400') || btn.classList.contains('text-red-500') ||
+                        btn.classList.contains('text-red-200') || btn.classList.contains('text-destructive') ||
+                        (btn.style.color || '').includes('red');
+          if ((txt.includes('delete post') || txt === 'delete') && isRed) confirmBtn = btn;
+        });
+        if (!confirmBtn) {
+          confirmBtn = document.querySelector('button[aria-label*="Delete" i]');
+        }
+        if (!confirmBtn) { setTimeout(tryDelete, POLL_MS); return; }
+        realisticClick(confirmBtn);
+        await new Promise(r => setTimeout(r, 800));
+        resolve(true);
+      }
+
+      // Wait for page to load before starting
+      setTimeout(tryDelete, 1500);
+    });
+  }
+
+  // Master remove function — cascades through strategies
   async function removePost(postId) {
-    if (state.sourceMode === 'all') {
-      // For all-posts mode, use delete which works for both liked and agent-created posts
-      const ok = await deletePost(postId);
+    if (state.sourceMode === 'favorites') {
+      // Favorites mode: unlike is the correct operation
+      const ok = await unlikePost(postId);
       if (ok) return true;
-      // Fallback to unlike in case delete endpoint isn't available
-      return await unlikePost(postId);
+      // Fallback: try API delete in case the post was saved but not liked
+      return await apiDeletePost(postId);
     }
-    return await unlikePost(postId);
+
+    // All-posts mode
+    if (state.deleteMode === 'dom') {
+      return await domClickDeletePost(postId);
+    }
+
+    // Auto mode: try API delete first (fast), fall back to DOM click
+    const apiOk = await apiDeletePost(postId);
+    if (apiOk) return true;
+    // Also try unlike as a secondary API attempt
+    const unlikeOk = await unlikePost(postId);
+    if (unlikeOk) return true;
+    // Last resort: DOM click
+    setStatus('API delete failed — switching to DOM-click mode for this post…', 'warning');
+    return await domClickDeletePost(postId);
   }
 
   // ─── Download ─────────────────────────────────────────────────────────────
@@ -1709,6 +1856,20 @@
         </div>
         <div style="font-size:11px;color:#475569;margin:-4px 0 10px;padding:0 2px">⚠️ <strong style="color:#fbbf24">All posts</strong> mode uses a hard delete — items are permanently removed from Grok's servers.</div>
 
+        <div class="gid-section-label">Delete Method</div>
+        <div class="gid-input-row" style="flex-direction:column;gap:6px;align-items:stretch">
+          ${DELETE_MODES.map(m => `
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:7px 10px;border-radius:8px;border:1px solid ${state.deleteMode===m.value ? 'rgba(251,191,36,0.4)' : 'rgba(255,255,255,0.07)'};background:${state.deleteMode===m.value ? 'rgba(251,191,36,0.07)' : 'rgba(255,255,255,0.02)'}">
+              <input type="radio" name="gid-delete-mode" value="${m.value}" ${state.deleteMode===m.value ? 'checked' : ''} style="margin-top:2px;accent-color:#f59e0b" />
+              <div>
+                <div style="font-size:12px;font-weight:600;color:#e2e8f0">${m.label}</div>
+                <div style="font-size:10px;color:#64748b;margin-top:2px">${m.desc}</div>
+              </div>
+            </label>
+          `).join('')}
+        </div>
+        <div style="font-size:11px;color:#475569;margin:-4px 0 10px;padding:0 2px">DOM click mode navigates to each post individually — keep the tab active and visible.</div>
+
         <div class="gid-section-label">Filter (applies when no selection active)</div>
         <div class="gid-filter-row">
           <button class="gid-filter-btn active" id="gid-filter-all">All</button>
@@ -1901,6 +2062,23 @@
           lbl.style.borderColor = isSelected ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.07)';
           lbl.style.background = isSelected ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.02)';
         });
+      });
+    });
+
+    // Delete mode radio buttons
+    document.querySelectorAll('input[name="gid-delete-mode"]').forEach(radio => {
+      radio.addEventListener('change', e => {
+        state.deleteMode = e.target.value;
+        GM_setValue('deleteMode', state.deleteMode);
+        // Update radio label styles
+        document.querySelectorAll('input[name="gid-delete-mode"]').forEach(r => {
+          const lbl = r.closest('label');
+          if (!lbl) return;
+          const isSelected = r.value === state.deleteMode;
+          lbl.style.borderColor = isSelected ? 'rgba(251,191,36,0.4)' : 'rgba(255,255,255,0.07)';
+          lbl.style.background  = isSelected ? 'rgba(251,191,36,0.07)' : 'rgba(255,255,255,0.02)';
+        });
+        setStatus(`Delete method set to: ${state.deleteMode === 'dom' ? 'DOM click (most reliable)' : 'Auto (API → DOM fallback)'}.`);
       });
     });
 
