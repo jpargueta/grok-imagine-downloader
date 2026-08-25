@@ -2,7 +2,7 @@
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
 // @version      1.0.6
-// @description  Bulk download all your Grok Imagine image and video creations to your local machine, and optionally unfavorite/delete them. Includes source mode (favorites or all posts including agent/conversation-created), Dry Run mode, visual thumbnail picker with date-range filter, reconnect/resume after interruption, and destination folder presets.
+// @description  Bulk download Grok Imagine creations and media/files discovered through Grok’s Files & Assets Manager. Includes source modes, Dry Run, thumbnail picker, reconnect/resume, and destination folder presets.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
@@ -11,11 +11,12 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
+// @grant        unsafeWindow
 // @connect      grok.com
 // @connect      assets.grok.com
 // @connect      imagine-public.x.ai
 // @connect      *
-// @run-at       document-start
+// @run-at       document-idle
 // @license      MIT
 // ==/UserScript==
 
@@ -36,16 +37,13 @@
   const SOURCE_MODES = [
     { value: 'favorites', label: '⭐ Favorites only (Imagine)', desc: 'Only liked/saved Imagine creations.' },
     { value: 'all',       label: '🌐 All posts (incl. agent-created)', desc: 'All images/videos Grok ever created for you — Imagine + conversations.' },
+    { value: 'files',     label: '📁 Files & assets (Manage)', desc: 'Downloadable files and media discovered on Grok’s See files and assets / Manage page.' },
   ];
+  const FILE_ASSET_CACHE_KEY = 'gidFileAssetCache';
+  const MAX_FILE_ASSET_CACHE = 6000;
   const PAGE_SIZE = 40;
   const DOWNLOAD_DELAY_MS = 350;
   const UNFAVORITE_DELAY_MS = 200;
-
-  // Delete modes for the remove subsystem
-  const DELETE_MODES = [
-    { value: 'auto', label: 'Auto (API \u2192 DOM fallback)', desc: 'Tries the API first; falls back to DOM-click if the endpoint rejects the request.' },
-    { value: 'dom',  label: 'DOM click only (most reliable)', desc: 'Navigates to each post page and clicks the Delete button. Slower but always works.' },
-  ];
 
   const FOLDER_PRESETS = [
     { label: 'grok-imagine (default)', value: 'grok-imagine' },
@@ -73,45 +71,14 @@
     downloadFolder: GM_getValue('downloadFolder', 'grok-imagine'),
     batchLimit: GM_getValue('batchLimit', 0),   // 0 = no limit (all)
     sourceMode: GM_getValue('sourceMode', 'favorites'), // 'favorites' | 'all'
-    deleteMode: GM_getValue('deleteMode', 'auto'),       // 'auto' | 'dom'
+    fileAssetCache: GM_getValue(FILE_ASSET_CACHE_KEY, []),
     filterType: 'all',
-    capturedHeaders: {},  // headers intercepted from Grok's own fetch calls
     dryRunMode: GM_getValue('dryRunMode', false),
+    // Resume / reconnect state
+    resumeOp: GM_getValue('resumeOp', null),       // 'download' | 'unfavorite' | 'both'
+    resumeIndex: GM_getValue('resumeIndex', 0),    // next item index to process
+    resumePostIds: GM_getValue('resumePostIds', null), // JSON array of post IDs
   };
-
-  // ─── Fetch-header intercept ───────────────────────────────────────────────
-  // Wraps window.fetch to capture auth/csrf headers from Grok's own requests.
-  // These are forwarded with GM_xmlhttpRequest delete calls so the server
-  // accepts them as legitimate same-origin requests.
-  // NOTE: run-at document-start means window.fetch exists before page scripts run.
-  (function installFetchInterceptor() {
-    const CAPTURE_KEYS = ['x-csrf-token','baggage','sentry-trace','x-request-id','authorization','x-transaction-id'];
-    const origFetch = window.fetch.bind(window);
-    window.fetch = function(input, init) {
-      try {
-        const url = typeof input === 'string' ? input : (input instanceof Request ? input.url : String(input));
-        if (url.includes('grok.com/rest/')) {
-          const hdrs = init && init.headers
-            ? (init.headers instanceof Headers
-                ? Object.fromEntries(init.headers.entries())
-                : (Array.isArray(init.headers)
-                    ? Object.fromEntries(init.headers)
-                    : { ...init.headers }))
-            : {};
-          CAPTURE_KEYS.forEach(k => {
-            const v = hdrs[k] || hdrs[k.toLowerCase()];
-            if (v) state.capturedHeaders[k] = v;
-          });
-        }
-      } catch (_) {}
-      return origFetch(input, init);
-    };
-  })();
-
-  // ─── Resume / reconnect state (part of state object, kept separate for clarity) ──
-  state.resumeOp       = GM_getValue('resumeOp', null);
-  state.resumeIndex    = GM_getValue('resumeIndex', 0);
-  state.resumePostIds  = GM_getValue('resumePostIds', null);
 
   // ─── Styles ───────────────────────────────────────────────────────────────
   GM_addStyle(`
@@ -842,12 +809,128 @@
   }
 
   function buildFilename(item) {
+    if (item.originalFilename) {
+      const original = sanitizeFilename(item.originalFilename);
+      return item.createTime ? `${item.createTime.slice(0, 19).replace(/:/g, '-').replace('T', '_')}_${original}` : original;
+    }
     const time = item.createTime
       ? item.createTime.slice(0, 19).replace(/:/g, '-').replace('T', '_')
       : 'unknown';
     const prompt = item.prompt ? '_' + sanitizeFilename(item.prompt).slice(0, 80) : '';
     const ext = item.isVideo ? 'mp4' : (item.mimeType === 'image/png' ? 'png' : 'jpg');
     return `${time}_${item.id}${prompt}.${ext}`;
+  }
+
+  // ─── Files & Assets capture adapter ───────────────────────────────────────
+  // Grok's consumer Files page does not expose a stable public REST contract.
+  // This adapter observes its own downloadable URLs and normalizes them to the
+  // existing media model. URLs are only collected while the user is on /files.
+  function isFilesPage() {
+    return /^\/files(?:\/|$)/.test(window.location.pathname);
+  }
+
+  function isUsableFileUrl(value) {
+    if (typeof value !== 'string' || !value) return false;
+    try {
+      const url = new URL(value, window.location.origin);
+      if (!/^https?:$/.test(url.protocol)) return false;
+      return !url.pathname.includes('/rest/') && !url.pathname.endsWith('/files');
+    } catch { return false; }
+  }
+
+  function inferFileMimeType(filename, explicitType = '') {
+    if (explicitType) return explicitType;
+    const ext = (filename || '').split('.').pop().toLowerCase();
+    const map = { mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', pdf: 'application/pdf', csv: 'text/csv', txt: 'text/plain', json: 'application/json' };
+    return map[ext] || 'application/octet-stream';
+  }
+
+  function normalizeFileAsset(raw, fallback = {}) {
+    if (!raw || typeof raw !== 'object') return null;
+    const rawUrl = raw.downloadUrl || raw.contentUrl || raw.signedUrl || raw.fileUrl || raw.mediaUrl || raw.url || raw.href || fallback.url;
+    if (!isUsableFileUrl(rawUrl)) return null;
+    const url = new URL(rawUrl, window.location.origin).href;
+    const originalFilename = raw.filename || raw.fileName || raw.name || raw.title || fallback.filename || '';
+    const id = String(raw.id || raw.fileId || raw.assetId || raw.uuid || fallback.id || url);
+    const mimeType = inferFileMimeType(originalFilename, raw.mimeType || raw.contentType || raw.type || fallback.mimeType || '');
+    const createValue = raw.createdAt || raw.created_at || raw.createTime || raw.updatedAt || raw.updated_at || fallback.createTime || '';
+    const createTime = typeof createValue === 'number' ? new Date(createValue * 1000).toISOString() : String(createValue || '');
+    return {
+      id: `file:${id}`,
+      postId: `file:${id}`,
+      url,
+      thumbUrl: raw.thumbnailUrl || raw.previewUrl || raw.mediaUrl || (mimeType.startsWith('image/') ? url : ''),
+      isVideo: mimeType.startsWith('video/'),
+      mimeType,
+      prompt: raw.description || raw.caption || raw.title || originalFilename || 'Grok file asset',
+      createTime,
+      originalFilename,
+      source: 'files',
+    };
+  }
+
+  function persistFileAssets(items) {
+    const existing = Array.isArray(state.fileAssetCache) ? state.fileAssetCache : [];
+    const byUrl = new Map(existing.map(item => [item.url, item]));
+    items.forEach(item => byUrl.set(item.url, item));
+    state.fileAssetCache = Array.from(byUrl.values()).slice(-MAX_FILE_ASSET_CACHE);
+    GM_setValue(FILE_ASSET_CACHE_KEY, state.fileAssetCache);
+  }
+
+  function captureFileAsset(raw, fallback = {}) {
+    const asset = normalizeFileAsset(raw, fallback);
+    if (!asset) return false;
+    const alreadyKnown = (state.fileAssetCache || []).some(item => item.url === asset.url);
+    if (!alreadyKnown) persistFileAssets([asset]);
+    return true;
+  }
+
+  function captureFileAssetsFromPayload(value, depth = 0, visited = new WeakSet()) {
+    if (!isFilesPage() || value == null || depth > 5) return 0;
+    if (typeof value !== 'object') return 0;
+    if (visited.has(value)) return 0;
+    visited.add(value);
+    let count = captureFileAsset(value) ? 1 : 0;
+    Object.values(value).forEach(child => {
+      if (child && typeof child === 'object') count += captureFileAssetsFromPayload(child, depth + 1, visited);
+    });
+    return count;
+  }
+
+  function scanFilesPageDom() {
+    if (!isFilesPage()) return 0;
+    let count = 0;
+    document.querySelectorAll('a[href], video[src], video source[src], img[src]').forEach(el => {
+      const url = el.href || el.currentSrc || el.src;
+      const filename = el.getAttribute('download') || el.getAttribute('title') || el.getAttribute('alt') || '';
+      if (captureFileAsset({ url, filename, mimeType: el.type || '' })) count++;
+    });
+    return count;
+  }
+
+  function installFilesAssetCapture() {
+    const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    if (pageWindow.__gidFilesCaptureInstalled || !pageWindow.fetch) return;
+    pageWindow.__gidFilesCaptureInstalled = true;
+    const originalFetch = pageWindow.fetch.bind(pageWindow);
+    pageWindow.fetch = async function(...args) {
+      const response = await originalFetch(...args);
+      try {
+        if (isFilesPage()) {
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            response.clone().json().then(payload => captureFileAssetsFromPayload(payload)).catch(() => {});
+          }
+        }
+      } catch (_) {}
+      return response;
+    };
+    document.addEventListener('click', () => setTimeout(scanFilesPageDom, 500), true);
+    if (isFilesPage()) {
+      const observer = new MutationObserver(() => scanFilesPageDom());
+      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['href', 'src'] });
+      setTimeout(scanFilesPageDom, 1200);
+    }
   }
 
   // ─── API ──────────────────────────────────────────────────────────────────
@@ -865,33 +948,6 @@
         },
         onerror: () => reject(new Error('Network error')),
         ontimeout: () => reject(new Error('Request timed out')),
-      });
-    });
-  }
-
-  // apiPostWithHeaders — like apiPost but forwards captured Grok session headers
-  function apiPostWithHeaders(url, body) {
-    return new Promise((resolve, reject) => {
-      const headers = {
-        'Content-Type': 'application/json',
-        ...state.capturedHeaders,
-      };
-      GM_xmlhttpRequest({
-        method: 'POST',
-        url,
-        headers,
-        data: JSON.stringify(body),
-        withCredentials: true,
-        onload: res => {
-          if (res.status >= 200 && res.status < 300) {
-            try { resolve(JSON.parse(res.responseText)); }
-            catch { resolve({ success: true }); }
-          } else {
-            reject(new Error(`HTTP ${res.status}`));
-          }
-        },
-        onerror: () => reject(new Error('Network error')),
-        ontimeout: () => reject(new Error('Timeout')),
       });
     });
   }
@@ -961,113 +1017,40 @@
     return allMedia;
   }
 
-  // ─── Remove subsystem ────────────────────────────────────────────────────
-  // Strategy 1: unlike (favorites mode — old liked posts)
+  async function fetchCapturedFileAssets() {
+    scanFilesPageDom();
+    const assets = Array.isArray(state.fileAssetCache) ? state.fileAssetCache : [];
+    if (assets.length === 0) {
+      throw new Error('No Files & Assets downloads captured yet. Open See files and assets / Manage, let it load, click a file Download action once, then return here and fetch again.');
+    }
+    return assets;
+  }
+
   async function unlikePost(postId) {
     try {
-      const res = await apiPostWithHeaders(API.UNLIKE, { id: postId });
+      const res = await apiPost(API.UNLIKE, { id: postId });
       return res && (res.success !== false);
     } catch { return false; }
   }
 
-  // Strategy 2: API delete with captured headers
-  async function apiDeletePost(postId) {
+  // Hard-delete a post (works for agent-created items that can't be unliked)
+  async function deletePost(postId) {
     try {
-      const res = await apiPostWithHeaders(API.DELETE, { id: postId });
+      const res = await apiPost(API.DELETE, { id: postId });
       return res && (res.success !== false);
     } catch { return false; }
   }
 
-  // Strategy 3: DOM-click delete — navigates to the post page and clicks through
-  // the More options → Delete post → Confirm dialog sequence.
-  async function domClickDeletePost(postId) {
-    const postUrl = `https://grok.com/imagine/post/${postId}`;
-    return new Promise(resolve => {
-      window.location.href = postUrl;
-      let attempts = 0;
-      const MAX_ATTEMPTS = 30; // 30 * 400ms = 12s max wait
-      const POLL_MS = 400;
-
-      function realisticClick(el) {
-        if (!el) return false;
-        try {
-          el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-          el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-          el.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true }));
-          el.dispatchEvent(new MouseEvent('click',     { bubbles: true }));
-          return true;
-        } catch { return false; }
-      }
-
-      async function tryDelete() {
-        attempts++;
-        if (attempts > MAX_ATTEMPTS) { resolve(false); return; }
-
-        // Step 1: find "More options" button
-        const moreBtn = document.querySelector(
-          'button[aria-label="More options"], button[aria-label="more options"], button[aria-label="Options"]'
-        );
-        if (!moreBtn) { setTimeout(tryDelete, POLL_MS); return; }
-        realisticClick(moreBtn);
-        await new Promise(r => setTimeout(r, 300));
-
-        // Step 2: find "Delete post" menu item
-        let deleteItem = null;
-        document.querySelectorAll('[role="menuitem"], [role="option"], button, li').forEach(el => {
-          const t = el.textContent.trim().toLowerCase();
-          if (t === 'delete post' || t === 'delete' || t === 'remove post') deleteItem = el;
-        });
-        if (!deleteItem) { setTimeout(tryDelete, POLL_MS); return; }
-        realisticClick(deleteItem);
-        await new Promise(r => setTimeout(r, 300));
-
-        // Step 3: find red confirmation button
-        let confirmBtn = null;
-        document.querySelectorAll('button').forEach(btn => {
-          const txt = btn.textContent.trim().toLowerCase();
-          const isRed = btn.classList.contains('text-red-400') || btn.classList.contains('text-red-500') ||
-                        btn.classList.contains('text-red-200') || btn.classList.contains('text-destructive') ||
-                        (btn.style.color || '').includes('red');
-          if ((txt.includes('delete post') || txt === 'delete') && isRed) confirmBtn = btn;
-        });
-        if (!confirmBtn) {
-          confirmBtn = document.querySelector('button[aria-label*="Delete" i]');
-        }
-        if (!confirmBtn) { setTimeout(tryDelete, POLL_MS); return; }
-        realisticClick(confirmBtn);
-        await new Promise(r => setTimeout(r, 800));
-        resolve(true);
-      }
-
-      // Wait for page to load before starting
-      setTimeout(tryDelete, 1500);
-    });
-  }
-
-  // Master remove function — cascades through strategies
+  // Remove a post: tries unlike first; if that fails (e.g. agent post), tries delete
   async function removePost(postId) {
-    if (state.sourceMode === 'favorites') {
-      // Favorites mode: unlike is the correct operation
-      const ok = await unlikePost(postId);
+    if (state.sourceMode === 'all') {
+      // For all-posts mode, use delete which works for both liked and agent-created posts
+      const ok = await deletePost(postId);
       if (ok) return true;
-      // Fallback: try API delete in case the post was saved but not liked
-      return await apiDeletePost(postId);
+      // Fallback to unlike in case delete endpoint isn't available
+      return await unlikePost(postId);
     }
-
-    // All-posts mode
-    if (state.deleteMode === 'dom') {
-      return await domClickDeletePost(postId);
-    }
-
-    // Auto mode: try API delete first (fast), fall back to DOM click
-    const apiOk = await apiDeletePost(postId);
-    if (apiOk) return true;
-    // Also try unlike as a secondary API attempt
-    const unlikeOk = await unlikePost(postId);
-    if (unlikeOk) return true;
-    // Last resort: DOM click
-    setStatus('API delete failed — switching to DOM-click mode for this post…', 'warning');
-    return await domClickDeletePost(postId);
+    return await unlikePost(postId);
   }
 
   // ─── Download ─────────────────────────────────────────────────────────────
@@ -1568,10 +1551,10 @@
     setProgress(0, 'Starting…');
 
     try {
-      const posts = await fetchAllPosts();
+      const posts = state.sourceMode === 'files' ? await fetchCapturedFileAssets() : await fetchAllPosts();
       state.posts = posts;
       updateStat('total', posts.length);
-      setStatus(`Found ${posts.length} media items.`, 'success');
+      setStatus(`Found ${posts.length} ${state.sourceMode === 'files' ? 'file and asset' : 'media'} item${posts.length === 1 ? '' : 's'}.`, 'success');
       setProgress(100, `${posts.length} items loaded`);
     } catch (e) {
       setStatus(e.message, 'error');
@@ -1676,6 +1659,10 @@
   }
 
   async function doUnfavorite(postsOverride) {
+    if (state.sourceMode === 'files') {
+      setStatus('Files & Assets source is download-only. Manage file deletion directly on Grok’s Files page.', 'warning');
+      return;
+    }
     if (state.isUnfavoriting) return;
     const items = postsOverride || getActiveItems();
     if (items.length === 0) { setStatus('No items to unfavorite. Fetch your library first.', 'warning'); return; }
@@ -1727,6 +1714,10 @@
   }
 
   async function doDownloadAndUnfavorite() {
+    if (state.sourceMode === 'files') {
+      setStatus('Files & Assets source is download-only. Use Download All; manage deletion directly on Grok’s Files page.', 'warning');
+      return;
+    }
     if (state.isDownloading || state.isUnfavoriting) return;
     const items = getActiveItems();
     if (items.length === 0) { setStatus('No items found. Fetch your library first.', 'warning'); return; }
@@ -1855,20 +1846,10 @@
           `).join('')}
         </div>
         <div style="font-size:11px;color:#475569;margin:-4px 0 10px;padding:0 2px">⚠️ <strong style="color:#fbbf24">All posts</strong> mode uses a hard delete — items are permanently removed from Grok's servers.</div>
-
-        <div class="gid-section-label">Delete Method</div>
-        <div class="gid-input-row" style="flex-direction:column;gap:6px;align-items:stretch">
-          ${DELETE_MODES.map(m => `
-            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:7px 10px;border-radius:8px;border:1px solid ${state.deleteMode===m.value ? 'rgba(251,191,36,0.4)' : 'rgba(255,255,255,0.07)'};background:${state.deleteMode===m.value ? 'rgba(251,191,36,0.07)' : 'rgba(255,255,255,0.02)'}">
-              <input type="radio" name="gid-delete-mode" value="${m.value}" ${state.deleteMode===m.value ? 'checked' : ''} style="margin-top:2px;accent-color:#f59e0b" />
-              <div>
-                <div style="font-size:12px;font-weight:600;color:#e2e8f0">${m.label}</div>
-                <div style="font-size:10px;color:#64748b;margin-top:2px">${m.desc}</div>
-              </div>
-            </label>
-          `).join('')}
+        <div id="gid-files-helper" style="${state.sourceMode === 'files' ? '' : 'display:none'};margin:-2px 0 10px;padding:10px;border:1px solid rgba(56,189,248,.25);border-radius:9px;background:rgba(14,116,144,.10)">
+          <div style="font-size:11px;line-height:1.45;color:#bae6fd">Open Grok’s <strong>See files and assets / Manage</strong> view once. This script remembers every downloadable URL it sees there; then return here to bulk-download the captured assets.</div>
+          <button class="gid-btn gid-btn-secondary" id="gid-btn-open-files" style="margin:8px 0 0;padding:7px 10px;font-size:11px">Open Files & Assets</button>
         </div>
-        <div style="font-size:11px;color:#475569;margin:-4px 0 10px;padding:0 2px">DOM click mode navigates to each post individually — keep the tab active and visible.</div>
 
         <div class="gid-section-label">Filter (applies when no selection active)</div>
         <div class="gid-filter-row">
@@ -2038,7 +2019,9 @@
         GM_setValue('sourceMode', state.sourceMode);
         // Update stat label
         const statLabel = document.getElementById('gid-stat-removed-label');
-        if (statLabel) statLabel.textContent = state.sourceMode === 'all' ? 'DELETED' : 'UNFAVORITED';
+        if (statLabel) statLabel.textContent = state.sourceMode === 'files' ? 'MANAGE IN GROK' : (state.sourceMode === 'all' ? 'DELETED' : 'UNFAVORITED');
+        const filesHelper = document.getElementById('gid-files-helper');
+        if (filesHelper) filesHelper.style.display = state.sourceMode === 'files' ? '' : 'none';
         // Update action button labels
         updateSelectionBanner();
         // Reset library — different source may have different posts
@@ -2048,7 +2031,7 @@
         updateStat('total', '—');
         updateStat('downloaded', '—');
         updateStat('unfavorited', '—');
-        const fetchMode = state.sourceMode === 'all' ? 'all posts (Imagine + agent-created)' : 'favorites';
+        const fetchMode = state.sourceMode === 'all' ? 'all posts (Imagine + agent-created)' : (state.sourceMode === 'files' ? 'captured Files & Assets' : 'favorites');
         setStatus(`Source changed to ${fetchMode}. Fetch your library to continue.`);
         ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker'].forEach(id => {
           const el = document.getElementById(id);
@@ -2065,22 +2048,12 @@
       });
     });
 
-    // Delete mode radio buttons
-    document.querySelectorAll('input[name="gid-delete-mode"]').forEach(radio => {
-      radio.addEventListener('change', e => {
-        state.deleteMode = e.target.value;
-        GM_setValue('deleteMode', state.deleteMode);
-        // Update radio label styles
-        document.querySelectorAll('input[name="gid-delete-mode"]').forEach(r => {
-          const lbl = r.closest('label');
-          if (!lbl) return;
-          const isSelected = r.value === state.deleteMode;
-          lbl.style.borderColor = isSelected ? 'rgba(251,191,36,0.4)' : 'rgba(255,255,255,0.07)';
-          lbl.style.background  = isSelected ? 'rgba(251,191,36,0.07)' : 'rgba(255,255,255,0.02)';
-        });
-        setStatus(`Delete method set to: ${state.deleteMode === 'dom' ? 'DOM click (most reliable)' : 'Auto (API → DOM fallback)'}.`);
+    const openFilesBtn = document.getElementById('gid-btn-open-files');
+    if (openFilesBtn) {
+      openFilesBtn.addEventListener('click', () => {
+        window.location.href = 'https://grok.com/files';
       });
-    });
+    }
 
     // Filter buttons
     ['all', 'images', 'videos'].forEach(type => {
@@ -2124,9 +2097,12 @@
     document.getElementById('gid-btn-fetch').addEventListener('click', async () => {
       await doFetch();
       const hasItems = state.posts.length > 0;
+      const enabledIds = state.sourceMode === 'files'
+        ? ['gid-btn-download', 'gid-btn-dryrun', 'gid-btn-picker']
+        : ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker'];
       ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker'].forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.disabled = !hasItems;
+        if (el) el.disabled = !enabledIds.includes(id) || !hasItems;
       });
     });
 
@@ -2144,6 +2120,7 @@
   // ─── Init ─────────────────────────────────────────────────────────────────
   function init() {
     if (document.getElementById('gid-panel')) return;
+    installFilesAssetCapture();
     const panel = buildPanel();
     const toggleBtn = buildToggleBtn();
     document.body.appendChild(panel);

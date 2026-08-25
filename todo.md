@@ -1,0 +1,5 @@
+- [x] Restore the managed workspace to the current GitHub repository state.
+- [x] Verify the resulting revision and record the synchronization outcome.
+- [ ] Identify the Grok files-and-assets data source and media fields.
+- [ ] Add the files-and-assets download source to the userscript.
+- [ ] Validate, document, checkpoint, and synchronize the updated script.

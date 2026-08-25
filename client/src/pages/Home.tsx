@@ -25,10 +25,9 @@ const changelog = [
     tag: "latest",
     tagColor: "#6366f1",
     changes: [
-      { type: "new", text: "Multi-strategy delete subsystem — Grok removed the favorites button, so deletion now cascades: (1) API unlike, (2) API delete with captured session headers, (3) DOM-click fallback that navigates to each post page and clicks More options → Delete post → Confirm." },
-      { type: "new", text: "Delete Method selector — choose between Auto (API → DOM fallback) and DOM click only (most reliable). DOM mode keeps the tab active and works even if Grok changes its API." },
-      { type: "new", text: "Fetch-header interceptor — the script captures Grok's own auth/CSRF headers (x-csrf-token, baggage, sentry-trace) from outbound requests and forwards them with every delete call, maximizing API acceptance." },
-      { type: "improve", text: "Script now runs at document-start so the fetch interceptor is installed before any Grok page scripts run, ensuring headers are captured from the very first request." },
+      { type: "new", text: "Files & Assets (Manage) source — captures media and file download URLs exposed in Grok’s See files and assets / Manage experience, then adds them to the same batch download workflow." },
+      { type: "new", text: "Open Files & Assets helper — opens grok.com/files and explains the one-time capture flow. The script retains discovered direct download URLs locally for later bulk downloads." },
+      { type: "improve", text: "File-library items preserve their original filename when available, while file-only mode safely disables Grok post deletion/unfavorite actions." },
     ],
   },
   {
@@ -37,9 +36,9 @@ const changelog = [
     tag: "previous",
     tagColor: "#475569",
     changes: [
-      { type: "new", text: "Library Source toggle — Favorites only vs All posts (including agent/conversation-created items)." },
-      { type: "new", text: "Hard delete support for All Posts mode via /rest/media/post/delete endpoint." },
-      { type: "improve", text: "Script now matches all grok.com pages. Action labels update dynamically for delete vs unfavorite mode." },
+      { type: "new", text: "Library Source toggle — switch between Favorites only (Imagine liked posts) and All posts mode, including conversation/agent-created items." },
+      { type: "new", text: "Hard delete support for All Posts mode, with a fallback to unlike if the delete request is unavailable." },
+      { type: "improve", text: "Script runs on all grok.com pages, and action labels update dynamically for delete versus unfavorite mode." },
     ],
   },
   {
