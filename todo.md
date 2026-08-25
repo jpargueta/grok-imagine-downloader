@@ -6,3 +6,6 @@
 - [x] Identify the current Grok Files deletion route or reliable UI fallback.
 - [x] Add per-file deletion after confirmed successful download in Files & Assets mode.
 - [x] Validate, document, checkpoint, and synchronize the new behavior.
+- [x] Identify the current asset-card or menu-based delete controls on Grok Files.
+- [x] Add safe menu-based deletion fallbacks after confirmed downloads.
+- [x] Validate the repair, update changelog, checkpoint, and synchronize GitHub.

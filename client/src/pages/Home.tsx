@@ -13,21 +13,31 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.7";
+const SCRIPT_VERSION = "1.0.8";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.7",
+    version: "1.0.8",
     date: "Aug 2026",
     tag: "latest",
     tagColor: "#6366f1",
     changes: [
-      { type: "new", text: "Files & Assets Download + Delete — after every confirmed local download, the script finds the matching file on Grok’s Files page, opens its delete action, and confirms removal before moving to the next file." },
-      { type: "improve", text: "Deletion is intentionally fail-safe: a file remains on Grok if its local download fails, the matching page row cannot be found, or the confirmation control does not appear." },
-      { type: "improve", text: "Interrupted Files & Assets runs can reconnect and resume. The panel now labels the source’s primary action and deletion statistic explicitly." },
+      { type: "fix", text: "Files & Assets deletion now supports Grok’s current asset-card layout: after a successful local download, it finds the matching card, opens More options when needed, selects Delete, and confirms the dialog." },
+      { type: "improve", text: "The adapter now recognizes direct delete controls, menu triggers, semantic item rows, common data IDs, and current menu test IDs before falling back safely." },
+      { type: "improve", text: "Safety guardrails remain unchanged: no Grok file is deleted if its download, item match, Delete action, or confirmation fails." },
+    ],
+  },
+  {
+    version: "1.0.7",
+    date: "Aug 2026",
+    tag: "previous",
+    tagColor: "#475569",
+    changes: [
+      { type: "new", text: "Files & Assets Download + Delete — deletes matching Grok file rows only after confirmed local downloads, with reconnect support." },
+      { type: "improve", text: "Files remain on Grok when a download, row match, or confirmation control fails." },
     ],
   },
   {
