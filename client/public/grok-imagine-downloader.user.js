@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.6
-// @description  Bulk download Grok Imagine creations and media/files discovered through Grok’s Files & Assets Manager. Includes source modes, Dry Run, thumbnail picker, reconnect/resume, and destination folder presets.
+// @version      1.0.7
+// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files & Assets mode deletes each server-side file only after its local download succeeds.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.6';
+  const SCRIPT_VERSION = '1.0.7';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -1068,6 +1068,57 @@
     });
   }
 
+  // Grok’s consumer Files page exposes deletion through a row action plus a
+  // confirmation dialog. We use that visible flow and require an exact
+  // filename match, so files are removed only after GM_download reports success.
+  function fileDisplayName(item) {
+    if (item.originalFilename) return item.originalFilename;
+    try { return decodeURIComponent(new URL(item.url).pathname.split('/').pop() || ''); }
+    catch { return ''; }
+  }
+
+  function findFileDeleteButton(item) {
+    const targetName = fileDisplayName(item).trim();
+    const candidates = Array.from(document.querySelectorAll('button[aria-label="Delete file"], button[aria-label="Delete"]'))
+      .filter(btn => !btn.closest('[role="dialog"]'));
+    for (const btn of candidates) {
+      let node = btn;
+      for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+        const rowText = (node.innerText || '').trim();
+        if (targetName && rowText.includes(targetName)) return btn;
+      }
+    }
+    const explicitButtons = candidates.filter(btn => btn.getAttribute('aria-label') === 'Delete file');
+    return explicitButtons.length === 1 ? explicitButtons[0] : null;
+  }
+
+  function findFileDeleteConfirmation() {
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [data-radix-portal]'));
+    for (const dialog of dialogs) {
+      const button = Array.from(dialog.querySelectorAll('button')).find(btn => {
+        const label = `${btn.getAttribute('aria-label') || ''} ${btn.textContent || ''}`.trim().toLowerCase();
+        return /^(delete|confirm)(\s+file)?$/.test(label) || label.includes('delete file');
+      });
+      if (button) return button;
+    }
+    return null;
+  }
+
+  async function deleteDownloadedFileFromGrok(item) {
+    if (!isFilesPage()) return { ok: false, reason: 'Open the Files & Assets page before starting Download + Delete.' };
+    const deleteBtn = findFileDeleteButton(item);
+    if (!deleteBtn) return { ok: false, reason: `Could not find the Files-page delete action for ${fileDisplayName(item) || 'this item'}.` };
+    deleteBtn.click();
+    await sleep(300);
+    const confirmBtn = findFileDeleteConfirmation();
+    if (!confirmBtn) return { ok: false, reason: `Grok did not show a delete confirmation for ${fileDisplayName(item) || 'this item'}.` };
+    confirmBtn.click();
+    await sleep(450);
+    state.fileAssetCache = (state.fileAssetCache || []).filter(asset => asset.id !== item.id && asset.url !== item.url);
+    GM_setValue(FILE_ASSET_CACHE_KEY, state.fileAssetCache);
+    return { ok: true };
+  }
+
   // ─── UI Helpers ───────────────────────────────────────────────────────────
   function setStatus(msg, type = '') {
     const el = document.getElementById('gid-status');
@@ -1129,7 +1180,9 @@
       const dlBtn = document.getElementById('gid-btn-download');
       const unfavBtn = document.getElementById('gid-btn-unfavorite');
       const bothBtn = document.getElementById('gid-btn-both');
-      if (dlBtn) dlBtn.textContent = `⬇ Download Selected (${state.selectedIds.size})`;
+      if (dlBtn) dlBtn.textContent = state.sourceMode === 'files'
+        ? `⬇🗑 Download + Delete Selected (${state.selectedIds.size})`
+        : `⬇ Download Selected (${state.selectedIds.size})`;
       const removeLabel = state.sourceMode === 'all' ? 'Delete' : 'Unfavorite';
       if (unfavBtn) unfavBtn.textContent = `🗑 ${removeLabel} Selected (${state.selectedIds.size})`;
       if (bothBtn) bothBtn.textContent = `⬇🗑 Download + ${removeLabel} Selected (${state.selectedIds.size})`;
@@ -1138,7 +1191,7 @@
       const dlBtn = document.getElementById('gid-btn-download');
       const unfavBtn = document.getElementById('gid-btn-unfavorite');
       const bothBtn = document.getElementById('gid-btn-both');
-      if (dlBtn) dlBtn.textContent = '⬇ Download All';
+      if (dlBtn) dlBtn.textContent = state.sourceMode === 'files' ? '⬇🗑 Download + Delete Files' : '⬇ Download All';
       const removeLabel2 = state.sourceMode === 'all' ? 'Delete' : 'Unfavorite';
       if (unfavBtn) unfavBtn.textContent = `🗑 ${removeLabel2} All (Remove from Server)`;
       if (bothBtn) bothBtn.textContent = `⬇🗑 Download + ${removeLabel2} All`;
@@ -1536,6 +1589,8 @@
 
     if (op === 'download') {
       await doDownloadItems(remaining, allItems, startIndex);
+    } else if (op === 'files-delete') {
+      await doDownloadAndDeleteFiles(remaining, allItems, startIndex);
     } else if (op === 'unfavorite') {
       await doUnfavorite(remaining);
     } else if (op === 'both') {
@@ -1618,7 +1673,70 @@
       setStatus('No items to download. Fetch your library first.', 'warning');
       return;
     }
+    if (state.sourceMode === 'files') {
+      if (!isFilesPage()) {
+        setStatus('Open Grok’s Files & Assets page before starting Download + Delete.', 'warning');
+        return;
+      }
+      const confirmed = confirm(`Download and permanently delete ${items.length} file${items.length === 1 ? '' : 's'}?\n\nEach file is deleted from Grok only after its local download completes successfully. Failed downloads and files that cannot be matched to a Grok delete control are left on the server.\n\nProceed?`);
+      if (!confirmed) return;
+      await doDownloadAndDeleteFiles(items, items, 0);
+      return;
+    }
     await doDownloadItems(items, items, 0);
+  }
+
+  async function doDownloadAndDeleteFiles(items, allItems, startOffset) {
+    if (state.isDownloading) return;
+    if (!isFilesPage()) {
+      setStatus('Open Grok’s Files & Assets page before resuming Download + Delete.', 'warning');
+      return;
+    }
+    state.isDownloading = true;
+    state.cancelRequested = false;
+    state.downloadedCount = 0;
+    state.failedCount = 0;
+    state.unfavoritedCount = 0;
+    setButtonsDisabled(true);
+    setProgress(0, `0 / ${items.length}`);
+    setStatus(`Downloading and deleting ${items.length} Files & Assets items…`);
+    saveResume('files-delete', startOffset, allItems);
+
+    for (let i = 0; i < items.length; i++) {
+      if (state.cancelRequested) {
+        saveResume('files-delete', startOffset + i, allItems);
+        setStatus(`Cancelled after ${state.downloadedCount} downloads and ${state.unfavoritedCount} deletions. Reconnect to resume.`, 'warning');
+        updateReconnectBanner();
+        break;
+      }
+      const item = items[i];
+      const downloaded = await downloadItem(item);
+      if (downloaded) {
+        state.downloadedCount++;
+        const deletion = await deleteDownloadedFileFromGrok(item);
+        if (deletion.ok) state.unfavoritedCount++;
+        else setStatus(`Downloaded ${fileDisplayName(item) || 'file'}, but did not delete it: ${deletion.reason}`, 'warning');
+      } else {
+        state.failedCount++;
+      }
+      updateStat('downloaded', state.downloadedCount);
+      updateStat('unfavorited', state.unfavoritedCount);
+      setProgress(
+        ((i + 1) / items.length) * 100,
+        `${i + 1} / ${items.length} — ${state.downloadedCount} saved, ${state.unfavoritedCount} deleted${state.failedCount ? `, ${state.failedCount} failed` : ''}`
+      );
+      if (i % 5 === 4) saveResume('files-delete', startOffset + i + 1, allItems);
+      await sleep(DOWNLOAD_DELAY_MS);
+    }
+
+    if (!state.cancelRequested) {
+      clearResume();
+      updateReconnectBanner();
+      setStatus(`Done! ${state.downloadedCount} downloaded, ${state.unfavoritedCount} deleted${state.failedCount ? `, ${state.failedCount} download failures` : ''}.`, state.failedCount ? 'warning' : 'success');
+    }
+    state.isDownloading = false;
+    setButtonsDisabled(false);
+    setTimeout(hideProgress, 3500);
   }
 
   async function doDownloadItems(items, allItems, startOffset) {
@@ -1847,7 +1965,7 @@
         </div>
         <div style="font-size:11px;color:#475569;margin:-4px 0 10px;padding:0 2px">⚠️ <strong style="color:#fbbf24">All posts</strong> mode uses a hard delete — items are permanently removed from Grok's servers.</div>
         <div id="gid-files-helper" style="${state.sourceMode === 'files' ? '' : 'display:none'};margin:-2px 0 10px;padding:10px;border:1px solid rgba(56,189,248,.25);border-radius:9px;background:rgba(14,116,144,.10)">
-          <div style="font-size:11px;line-height:1.45;color:#bae6fd">Open Grok’s <strong>See files and assets / Manage</strong> view once. This script remembers every downloadable URL it sees there; then return here to bulk-download the captured assets.</div>
+          <div style="font-size:11px;line-height:1.45;color:#bae6fd">Open Grok’s <strong>See files and assets / Manage</strong> view once. This script remembers each downloadable URL it sees there. In this mode, successful local downloads are then permanently deleted from Grok one file at a time.</div>
           <button class="gid-btn gid-btn-secondary" id="gid-btn-open-files" style="margin:8px 0 0;padding:7px 10px;font-size:11px">Open Files & Assets</button>
         </div>
 
@@ -2019,7 +2137,7 @@
         GM_setValue('sourceMode', state.sourceMode);
         // Update stat label
         const statLabel = document.getElementById('gid-stat-removed-label');
-        if (statLabel) statLabel.textContent = state.sourceMode === 'files' ? 'MANAGE IN GROK' : (state.sourceMode === 'all' ? 'DELETED' : 'UNFAVORITED');
+        if (statLabel) statLabel.textContent = state.sourceMode === 'files' ? 'DELETED AFTER DOWNLOAD' : (state.sourceMode === 'all' ? 'DELETED' : 'UNFAVORITED');
         const filesHelper = document.getElementById('gid-files-helper');
         if (filesHelper) filesHelper.style.display = state.sourceMode === 'files' ? '' : 'none';
         // Update action button labels
@@ -2128,6 +2246,13 @@
     attachEvents(panel);
     buildPickerOverlay();
     refreshUI();
+    updateSelectionBanner();
+    if (state.sourceMode === 'files') {
+      const statLabel = document.getElementById('gid-stat-removed-label');
+      if (statLabel) statLabel.textContent = 'DELETED AFTER DOWNLOAD';
+      const filesHelper = document.getElementById('gid-files-helper');
+      if (filesHelper) filesHelper.style.display = '';
+    }
   }
 
   if (document.readyState === 'loading') {

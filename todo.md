@@ -1,5 +1,8 @@
 - [x] Restore the managed workspace to the current GitHub repository state.
 - [x] Verify the resulting revision and record the synchronization outcome.
-- [ ] Identify the Grok files-and-assets data source and media fields.
-- [ ] Add the files-and-assets download source to the userscript.
-- [ ] Validate, document, checkpoint, and synchronize the updated script.
+- [x] Identify the Grok files-and-assets data source and media fields.
+- [x] Add the files-and-assets download source to the userscript.
+- [x] Validate, document, checkpoint, and synchronize the updated script.
+- [x] Identify the current Grok Files deletion route or reliable UI fallback.
+- [x] Add per-file deletion after confirmed successful download in Files & Assets mode.
+- [x] Validate, document, checkpoint, and synchronize the new behavior.
