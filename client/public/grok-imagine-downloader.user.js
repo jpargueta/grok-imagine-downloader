@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.8
-// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files & Assets mode deletes each server-side file only after its local download succeeds, including current More options menu workflows.
+// @version      1.0.9
+// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files & Assets mode deletes each server-side file only after its local download succeeds, using the matching card’s three-dot menu when required.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.8';
+  const SCRIPT_VERSION = '1.0.9';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -1084,6 +1084,35 @@
       .filter(el => !isGidElement(el) && !el.closest('[role="dialog"]'));
   }
 
+  function comparableUrl(value) {
+    if (!value) return '';
+    try {
+      const url = new URL(value, window.location.href);
+      return `${url.origin}${decodeURIComponent(url.pathname)}`.replace(/\/$/, '').toLowerCase();
+    } catch { return ''; }
+  }
+
+  function findCardByAssetUrl(item) {
+    const targetUrl = comparableUrl(item.url);
+    if (!targetUrl) return null;
+    const sourceNodes = Array.from(document.querySelectorAll('a[href], img[src], video[src], video source[src], [data-src], [data-url], [data-file-url]'));
+    for (const node of sourceNodes) {
+      const values = [node.href, node.currentSrc, node.src, node.getAttribute('data-src'), node.getAttribute('data-url'), node.getAttribute('data-file-url')];
+      const matched = values.some(value => {
+        const candidateUrl = comparableUrl(value);
+        return candidateUrl && (candidateUrl === targetUrl || candidateUrl.endsWith(targetUrl) || targetUrl.endsWith(candidateUrl));
+      });
+      if (!matched) continue;
+      let card = node;
+      for (let depth = 0; card && depth < 12; depth++, card = card.parentElement) {
+        if (isGidElement(card) || card.closest('[role="dialog"]')) continue;
+        const buttonCount = card.querySelectorAll?.('button').length || 0;
+        if (buttonCount > 0 && buttonCount <= 5) return card;
+      }
+    }
+    return null;
+  }
+
   function findFileRow(item) {
     const targetName = fileDisplayName(item).trim().toLowerCase();
     const targetId = String(item.id || '').replace(/^file:/, '');
@@ -1097,7 +1126,7 @@
       if (score) ranked.push({ row, score, size: text.length });
     }
     ranked.sort((a, b) => b.score - a.score || a.size - b.size);
-    return ranked[0]?.row || null;
+    return findCardByAssetUrl(item) || ranked[0]?.row || null;
   }
 
   function findDirectDeleteButton(scope) {
@@ -1108,12 +1137,23 @@
 
   function findMoreOptionsButton(scope) {
     if (!scope) return null;
-    return Array.from(scope.querySelectorAll('button[aria-label*="more" i], button[title*="more" i], button[aria-haspopup="menu"], [data-testid*="more" i], [data-testid*="menu" i]'))
-      .find(btn => !isGidElement(btn) && !btn.closest('[role="dialog"]')) || null;
+    const controls = Array.from(scope.querySelectorAll('button')).filter(btn => !isGidElement(btn) && !btn.closest('[role="dialog"]'));
+    const named = controls.find(btn => {
+      const label = `${btn.getAttribute('aria-label') || ''} ${btn.getAttribute('title') || ''} ${btn.getAttribute('data-testid') || ''}`.toLowerCase();
+      return /more|option|action|overflow|menu/.test(label) || btn.getAttribute('aria-haspopup') === 'menu';
+    });
+    if (named) return named;
+    // Current Files cards use a three-dot icon button that may have no label.
+    // Prefer an unlabeled SVG icon control; it is the only non-text card action.
+    const iconOnly = controls.filter(btn => {
+      const text = (btn.textContent || '').trim();
+      return !text && !!btn.querySelector('svg');
+    });
+    return iconOnly[iconOnly.length - 1] || null;
   }
 
   function findDeleteMenuAction() {
-    const nodes = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], [data-radix-collection-item], button'));
+    const nodes = Array.from(document.querySelectorAll('[role="menu"] *, [role="menuitem"], [role="option"], [data-radix-collection-item], button'));
     return nodes.find(node => {
       if (isGidElement(node) || node.closest('[role="dialog"]')) return false;
       const label = `${node.getAttribute('aria-label') || ''} ${node.textContent || ''}`.trim().toLowerCase();

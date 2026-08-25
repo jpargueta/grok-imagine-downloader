@@ -9,3 +9,6 @@
 - [x] Identify the current asset-card or menu-based delete controls on Grok Files.
 - [x] Add safe menu-based deletion fallbacks after confirmed downloads.
 - [x] Validate the repair, update changelog, checkpoint, and synchronize GitHub.
+- [x] Match cached assets to rendered Files cards by source URL as well as filename.
+- [x] Trigger each matched card’s three-dot menu and Delete action after download.
+- [x] Validate the card-menu repair, update changelog, checkpoint, and synchronize GitHub.

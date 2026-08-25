@@ -13,21 +13,30 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.8";
+const SCRIPT_VERSION = "1.0.9";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.8",
+    version: "1.0.9",
     date: "Aug 2026",
     tag: "latest",
     tagColor: "#6366f1",
     changes: [
-      { type: "fix", text: "Files & Assets deletion now supports Grok’s current asset-card layout: after a successful local download, it finds the matching card, opens More options when needed, selects Delete, and confirms the dialog." },
-      { type: "improve", text: "The adapter now recognizes direct delete controls, menu triggers, semantic item rows, common data IDs, and current menu test IDs before falling back safely." },
-      { type: "improve", text: "Safety guardrails remain unchanged: no Grok file is deleted if its download, item match, Delete action, or confirmation fails." },
+      { type: "fix", text: "Files & Assets deletion now matches each cached asset to its visible card by normalized direct URL before falling back to filename or ID, resolving cases where virtualized cards omit the filename text." },
+      { type: "fix", text: "The script now targets the actual card-level three-dot overflow control, including unlabeled SVG icon buttons, then chooses Delete and confirms the dialog." },
+      { type: "improve", text: "Safety guardrails remain unchanged: no Grok file is deleted if its download, card match, Delete action, or confirmation fails." },
+    ],
+  },
+  {
+    version: "1.0.8",
+    date: "Aug 2026",
+    tag: "previous",
+    tagColor: "#475569",
+    changes: [
+      { type: "fix", text: "Added direct delete and generic More options/menu fallbacks for Files & Assets deletion after successful downloads." },
     ],
   },
   {
