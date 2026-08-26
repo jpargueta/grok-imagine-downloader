@@ -13,21 +13,30 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.9";
+const SCRIPT_VERSION = "1.0.10";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.9",
+    version: "1.0.10",
     date: "Aug 2026",
     tag: "latest",
     tagColor: "#6366f1",
     changes: [
-      { type: "fix", text: "Files & Assets deletion now matches each cached asset to its visible card by normalized direct URL before falling back to filename or ID, resolving cases where virtualized cards omit the filename text." },
-      { type: "fix", text: "The script now targets the actual card-level three-dot overflow control, including unlabeled SVG icon buttons, then chooses Delete and confirms the dialog." },
-      { type: "improve", text: "Safety guardrails remain unchanged: no Grok file is deleted if its download, card match, Delete action, or confirmation fails." },
+      { type: "improve", text: "Three-dot menu audit: Delete actions are now limited to visible menu items, and confirmation buttons are limited to visible, enabled controls in a visible deletion dialog." },
+      { type: "improve", text: "Removed the page-global Delete fallback, which could have targeted an unrelated asset when the matching card could not be established." },
+      { type: "improve", text: "After confirmation, the script now waits for the dialog to close before counting the file as deleted or removing it from its local cache." },
+    ],
+  },
+  {
+    version: "1.0.9",
+    date: "Aug 2026",
+    tag: "previous",
+    tagColor: "#475569",
+    changes: [
+      { type: "fix", text: "Matched cached assets to rendered Files cards by normalized URL and targeted each card’s three-dot menu." },
     ],
   },
   {

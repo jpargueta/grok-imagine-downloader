@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.9
-// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files & Assets mode deletes each server-side file only after its local download succeeds, using the matching card’s three-dot menu when required.
+// @version      1.0.10
+// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files & Assets deletion uses the matching card’s three-dot menu, visible Delete controls, and a verified confirmation close.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.9';
+  const SCRIPT_VERSION = '1.0.10';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -1079,6 +1079,13 @@
 
   function isGidElement(el) { return !!el?.closest?.('#gid-panel, #gid-picker-overlay, #gid-toggle-btn'); }
 
+  function isVisibleElement(el) {
+    if (!el || !el.isConnected) return false;
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0' && rect.width > 0 && rect.height > 0;
+  }
+
   function fileRowCandidates() {
     return Array.from(document.querySelectorAll('[data-file-id], [data-asset-id], [data-id], [role="listitem"], tr, li, article, [class*="file" i], [class*="asset" i]'))
       .filter(el => !isGidElement(el) && !el.closest('[role="dialog"]'));
@@ -1155,9 +1162,9 @@
   function findDeleteMenuAction() {
     const nodes = Array.from(document.querySelectorAll('[role="menu"] *, [role="menuitem"], [role="option"], [data-radix-collection-item], button'));
     return nodes.find(node => {
-      if (isGidElement(node) || node.closest('[role="dialog"]')) return false;
+      if (isGidElement(node) || node.closest('[role="dialog"]') || !isVisibleElement(node)) return false;
       const label = `${node.getAttribute('aria-label') || ''} ${node.textContent || ''}`.trim().toLowerCase();
-      return /delete(\s+(file|asset|item))?/.test(label) && label.length < 80;
+      return /^(delete|delete\s+(file|asset|item))$/.test(label) && label.length < 80;
     }) || null;
   }
 
@@ -1174,20 +1181,27 @@
       if (menuDelete) { menuDelete.click(); return true; }
     }
 
-    // Legacy Files layouts can expose a single direct control without a
-    // semantic row wrapper. Only use it when it is unequivocally one control.
-    const globalDirect = Array.from(document.querySelectorAll('button[aria-label="Delete file"]'))
-      .filter(btn => !isGidElement(btn) && !btn.closest('[role="dialog"]'));
-    if (globalDirect.length === 1) { globalDirect[0].click(); return true; }
+    // Do not use a page-global Delete fallback: it could target another asset
+    // when the matching card cannot be established.
     return false;
   }
 
-  function findFileDeleteConfirmation() {
+  function findFileDeleteConfirmation(item) {
+    const targetName = fileDisplayName(item).trim().toLowerCase();
     const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [data-radix-portal]'));
     for (const dialog of dialogs) {
+      if (!isVisibleElement(dialog) || isGidElement(dialog)) continue;
+      const dialogText = (dialog.innerText || '').trim().toLowerCase();
+      if (!dialogText.includes('delete')) continue;
+      if (targetName && dialogText.includes('.')) {
+        const filenameMentioned = dialogText.includes(targetName);
+        const genericFileConfirmation = /delete\s+(this\s+)?(file|asset|item)/.test(dialogText);
+        if (!filenameMentioned && !genericFileConfirmation) continue;
+      }
       const button = Array.from(dialog.querySelectorAll('button')).find(btn => {
+        if (!isVisibleElement(btn) || btn.disabled) return false;
         const label = `${btn.getAttribute('aria-label') || ''} ${btn.textContent || ''}`.trim().toLowerCase();
-        return /^(delete|confirm)(\s+file)?$/.test(label) || label.includes('delete file');
+        return /^(delete|delete\s+(file|asset|item)|confirm|confirm\s+delete)$/.test(label);
       });
       if (button) return button;
     }
@@ -1199,10 +1213,11 @@
     const opened = await openFileDeleteFlow(item);
     if (!opened) return { ok: false, reason: `Could not find a direct or More options delete action for ${fileDisplayName(item) || 'this item'}.` };
     await sleep(350);
-    const confirmBtn = findFileDeleteConfirmation();
+    const confirmBtn = findFileDeleteConfirmation(item);
     if (!confirmBtn) return { ok: false, reason: `Grok did not show a delete confirmation for ${fileDisplayName(item) || 'this item'}.` };
     confirmBtn.click();
-    await sleep(450);
+    await sleep(650);
+    if (isVisibleElement(confirmBtn)) return { ok: false, reason: `Grok kept the delete confirmation open for ${fileDisplayName(item) || 'this item'}.` };
     state.fileAssetCache = (state.fileAssetCache || []).filter(asset => asset.id !== item.id && asset.url !== item.url);
     GM_setValue(FILE_ASSET_CACHE_KEY, state.fileAssetCache);
     return { ok: true };

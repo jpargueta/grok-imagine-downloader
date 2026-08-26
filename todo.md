@@ -12,3 +12,6 @@
 - [x] Match cached assets to rendered Files cards by source URL as well as filename.
 - [x] Trigger each matched card’s three-dot menu and Delete action after download.
 - [x] Validate the card-menu repair, update changelog, checkpoint, and synchronize GitHub.
+- [x] Audit the three-dot card menu, Delete action, and confirmation selectors.
+- [x] Harden selectors only where the audit identifies a concrete risk.
+- [x] Record the audit findings and report them to the user.
