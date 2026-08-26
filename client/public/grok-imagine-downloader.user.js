@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.10
-// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files & Assets deletion uses the matching card’s three-dot menu, visible Delete controls, and a verified confirmation close.
+// @version      1.0.11
+// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files & Assets mode now includes a live per-file download and deletion audit trail.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.10';
+  const SCRIPT_VERSION = '1.0.11';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -41,6 +41,7 @@
   ];
   const FILE_ASSET_CACHE_KEY = 'gidFileAssetCache';
   const MAX_FILE_ASSET_CACHE = 6000;
+  const MAX_VISIBLE_FILE_STATUS_ROWS = 200;
   const PAGE_SIZE = 40;
   const DOWNLOAD_DELAY_MS = 350;
   const UNFAVORITE_DELAY_MS = 200;
@@ -68,6 +69,8 @@
     failedCount: 0,
     unfavoritedCount: 0,
     dryRunItems: [],
+    fileStatuses: [],
+    fileStatusIndex: new Map(),
     downloadFolder: GM_getValue('downloadFolder', 'grok-imagine'),
     batchLimit: GM_getValue('batchLimit', 0),   // 0 = no limit (all)
     sourceMode: GM_getValue('sourceMode', 'favorites'), // 'favorites' | 'all'
@@ -398,6 +401,25 @@
     .gid-status.error { color: #f87171; }
     .gid-status.warning { color: #fbbf24; }
     .gid-status.dryrun { color: #fbbf24; }
+
+    /* ── Files & Assets per-file audit trail ── */
+    .gid-file-status { display:none; margin:0 0 12px; border:1px solid rgba(96,165,250,0.22); border-radius:10px; background:rgba(15,23,42,0.62); overflow:hidden; }
+    .gid-file-status.visible { display:block; }
+    .gid-file-status-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.07); font-size:10px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#bfdbfe; }
+    .gid-file-status-summary { font-size:9px; color:#64748b; font-weight:600; letter-spacing:0; text-transform:none; }
+    .gid-file-status-list { max-height:202px; overflow-y:auto; }
+    .gid-file-status-row { display:grid; grid-template-columns:auto minmax(0,1fr); column-gap:8px; row-gap:2px; padding:7px 10px; border-bottom:1px solid rgba(255,255,255,0.055); }
+    .gid-file-status-row:last-child { border-bottom:none; }
+    .gid-file-status-badge { align-self:center; font-size:8px; font-weight:800; letter-spacing:0.055em; border-radius:4px; padding:3px 4px; min-width:62px; text-align:center; }
+    .gid-file-status-badge.queued { background:rgba(100,116,139,0.22); color:#cbd5e1; }
+    .gid-file-status-badge.downloading,.gid-file-status-badge.deleting { background:rgba(59,130,246,0.18); color:#93c5fd; }
+    .gid-file-status-badge.downloaded { background:rgba(34,197,94,0.15); color:#86efac; }
+    .gid-file-status-badge.deleted { background:rgba(16,185,129,0.18); color:#6ee7b7; }
+    .gid-file-status-badge.retained { background:rgba(245,158,11,0.18); color:#fcd34d; }
+    .gid-file-status-badge.failed { background:rgba(239,68,68,0.18); color:#fca5a5; }
+    .gid-file-status-badge.paused { background:rgba(148,163,184,0.18); color:#cbd5e1; }
+    .gid-file-status-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; color:#e2e8f0; line-height:1.35; }
+    .gid-file-status-detail { grid-column:2; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:9px; color:#64748b; line-height:1.3; }
 
     .gid-divider { border: none; border-top: 1px solid rgba(255,255,255,0.07); margin: 10px 0; }
 
@@ -1236,6 +1258,73 @@
     if (el) el.textContent = val;
   }
 
+  function escapeStatusHtml(value) {
+    return String(value || '').replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[char]));
+  }
+
+  function fileStatusKey(item) {
+    return String(item?.id || item?.url || '');
+  }
+
+  function resetFileStatuses(items) {
+    state.fileStatuses = items.map(item => ({
+      key: fileStatusKey(item),
+      name: fileDisplayName(item) || buildFilename(item),
+      status: 'queued',
+      detail: 'Waiting to download',
+    }));
+    state.fileStatusIndex = new Map(state.fileStatuses.map((entry, index) => [entry.key, index]));
+    renderFileStatuses();
+  }
+
+  function setFileStatus(item, status, detail) {
+    const key = fileStatusKey(item);
+    const index = state.fileStatusIndex.get(key);
+    if (index === undefined) return;
+    state.fileStatuses[index] = {
+      ...state.fileStatuses[index],
+      status,
+      detail,
+    };
+    renderFileStatuses();
+  }
+
+  function pauseQueuedFileStatuses(startIndex) {
+    for (let index = startIndex; index < state.fileStatuses.length; index++) {
+      if (state.fileStatuses[index].status === 'queued') {
+        state.fileStatuses[index] = { ...state.fileStatuses[index], status: 'paused', detail: 'Paused — reconnect to resume' };
+      }
+    }
+    renderFileStatuses();
+  }
+
+  function renderFileStatuses() {
+    const wrap = document.getElementById('gid-file-status');
+    const list = document.getElementById('gid-file-status-list');
+    const summary = document.getElementById('gid-file-status-summary');
+    if (!wrap || !list || !summary) return;
+    if (state.sourceMode !== 'files' || state.fileStatuses.length === 0) {
+      wrap.classList.remove('visible');
+      return;
+    }
+    const counts = state.fileStatuses.reduce((result, entry) => {
+      result[entry.status] = (result[entry.status] || 0) + 1;
+      return result;
+    }, {});
+    const completed = state.fileStatuses.filter(entry => entry.status !== 'queued').slice(-MAX_VISIBLE_FILE_STATUS_ROWS);
+    const remainingSlots = Math.max(0, MAX_VISIBLE_FILE_STATUS_ROWS - completed.length);
+    const queued = state.fileStatuses.filter(entry => entry.status === 'queued').slice(0, remainingSlots);
+    const visibleEntries = [...completed, ...queued];
+    summary.textContent = `${counts.deleted || 0} deleted · ${counts.retained || 0} retained · ${counts.failed || 0} failed · showing ${visibleEntries.length}/${state.fileStatuses.length}`;
+    list.innerHTML = visibleEntries.map(entry => `
+      <div class="gid-file-status-row">
+        <span class="gid-file-status-badge ${escapeStatusHtml(entry.status)}">${escapeStatusHtml(entry.status)}</span>
+        <div class="gid-file-status-name" title="${escapeStatusHtml(entry.name)}">${escapeStatusHtml(entry.name)}</div>
+        <div class="gid-file-status-detail" title="${escapeStatusHtml(entry.detail)}">${escapeStatusHtml(entry.detail)}</div>
+      </div>
+    `).join('');
+  }
+
   function setProgress(pct, label, isDryRun = false) {
     const wrap = document.getElementById('gid-progress-wrap');
     const bar = document.getElementById('gid-progress-bar');
@@ -1804,24 +1893,35 @@
     setButtonsDisabled(true);
     setProgress(0, `0 / ${items.length}`);
     setStatus(`Downloading and deleting ${items.length} Files & Assets items…`);
+    resetFileStatuses(items);
     saveResume('files-delete', startOffset, allItems);
 
     for (let i = 0; i < items.length; i++) {
       if (state.cancelRequested) {
         saveResume('files-delete', startOffset + i, allItems);
+        pauseQueuedFileStatuses(i);
         setStatus(`Cancelled after ${state.downloadedCount} downloads and ${state.unfavoritedCount} deletions. Reconnect to resume.`, 'warning');
         updateReconnectBanner();
         break;
       }
       const item = items[i];
+      setFileStatus(item, 'downloading', 'Saving to your selected Downloads folder…');
       const downloaded = await downloadItem(item);
       if (downloaded) {
         state.downloadedCount++;
+        setFileStatus(item, 'downloaded', 'Local download confirmed; locating the Grok card…');
+        setFileStatus(item, 'deleting', 'Opening the three-dot menu and confirming Delete…');
         const deletion = await deleteDownloadedFileFromGrok(item);
-        if (deletion.ok) state.unfavoritedCount++;
-        else setStatus(`Downloaded ${fileDisplayName(item) || 'file'}, but did not delete it: ${deletion.reason}`, 'warning');
+        if (deletion.ok) {
+          state.unfavoritedCount++;
+          setFileStatus(item, 'deleted', 'Downloaded locally and removed from Grok.');
+        } else {
+          setFileStatus(item, 'retained', `Downloaded locally; retained on Grok — ${deletion.reason}`);
+          setStatus(`Downloaded ${fileDisplayName(item) || 'file'}, but did not delete it: ${deletion.reason}`, 'warning');
+        }
       } else {
         state.failedCount++;
+        setFileStatus(item, 'failed', 'Browser download failed or timed out; retained on Grok.');
       }
       updateStat('downloaded', state.downloadedCount);
       updateStat('unfavorited', state.unfavoritedCount);
@@ -2144,6 +2244,14 @@
             <div class="gid-progress-bar" id="gid-progress-bar"></div>
           </div>
           <div class="gid-progress-text" id="gid-progress-text"></div>
+        </div>
+
+        <div class="gid-file-status" id="gid-file-status" aria-live="polite">
+          <div class="gid-file-status-head">
+            <span>Files &amp; Assets audit trail</span>
+            <span class="gid-file-status-summary" id="gid-file-status-summary">0 deleted · 0 retained · 0 failed</span>
+          </div>
+          <div class="gid-file-status-list" id="gid-file-status-list"></div>
         </div>
 
         <div class="gid-status" id="gid-status">Navigate to grok.com/imagine/favorites, then fetch your library.</div>

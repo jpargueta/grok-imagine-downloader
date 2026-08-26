@@ -13,21 +13,30 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.10";
+const SCRIPT_VERSION = "1.0.11";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.10",
+    version: "1.0.11",
     date: "Aug 2026",
     tag: "latest",
     tagColor: "#6366f1",
     changes: [
-      { type: "improve", text: "Three-dot menu audit: Delete actions are now limited to visible menu items, and confirmation buttons are limited to visible, enabled controls in a visible deletion dialog." },
-      { type: "improve", text: "Removed the page-global Delete fallback, which could have targeted an unrelated asset when the matching card could not be established." },
-      { type: "improve", text: "After confirmation, the script now waits for the dialog to close before counting the file as deleted or removing it from its local cache." },
+      { type: "new", text: "Files & Assets audit trail — a live, scrollable per-file status panel now shows queued, downloading, downloaded, deleting, deleted, retained, failed, and paused states." },
+      { type: "improve", text: "Each row explains the outcome, including why a downloaded file was retained on Grok or why its browser download failed." },
+      { type: "improve", text: "The panel summarizes deletion, retained, and failure counts and remains responsive for large batches by showing the most relevant 200 rows." },
+    ],
+  },
+  {
+    version: "1.0.10",
+    date: "Aug 2026",
+    tag: "previous",
+    tagColor: "#475569",
+    changes: [
+      { type: "improve", text: "Hardened the three-dot delete flow with visible menu and confirmation requirements and removed the unsafe page-wide fallback." },
     ],
   },
   {
