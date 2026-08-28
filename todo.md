@@ -18,3 +18,6 @@
 - [x] Identify panel and operation-loop insertion points for per-file status reporting.
 - [x] Add live per-file queued, downloading, downloaded, deleted, retained, and failed indicators.
 - [x] Validate the interface, update changelog, checkpoint, and synchronize GitHub.
+- [x] Assess whether a live browser simulation is available without accessing the user’s files.
+- [x] Implement a user-like three-dot interaction and non-destructive card-menu test.
+- [ ] Publish v1.0.12, then run the no-delete menu test in the user’s Grok Files session and report its exact result.

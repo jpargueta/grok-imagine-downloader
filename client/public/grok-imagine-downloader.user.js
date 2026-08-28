@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.11
-// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files & Assets mode now includes a live per-file download and deletion audit trail.
+// @version      1.0.12
+// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files mode includes a per-card three-dot delete test and reliable card-locator capture.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.11';
+  const SCRIPT_VERSION = '1.0.12';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -888,6 +888,7 @@
       createTime,
       originalFilename,
       source: 'files',
+      cardLocator: raw.cardLocator || fallback.cardLocator || null,
     };
   }
 
@@ -902,8 +903,22 @@
   function captureFileAsset(raw, fallback = {}) {
     const asset = normalizeFileAsset(raw, fallback);
     if (!asset) return false;
-    const alreadyKnown = (state.fileAssetCache || []).some(item => item.url === asset.url);
-    if (!alreadyKnown) persistFileAssets([asset]);
+    const existing = (state.fileAssetCache || []).find(item => item.url === asset.url);
+    if (!existing) {
+      persistFileAssets([asset]);
+      return true;
+    }
+    // Network captures often have the authoritative file ID, while visible
+    // card scans have the locator needed for the three-dot control. Keep both.
+    const enriched = {
+      ...existing,
+      originalFilename: asset.originalFilename || existing.originalFilename,
+      cardLocator: asset.cardLocator || existing.cardLocator,
+      thumbUrl: asset.thumbUrl || existing.thumbUrl,
+    };
+    if (enriched.cardLocator !== existing.cardLocator || enriched.originalFilename !== existing.originalFilename || enriched.thumbUrl !== existing.thumbUrl) {
+      persistFileAssets([enriched]);
+    }
     return true;
   }
 
@@ -925,7 +940,9 @@
     document.querySelectorAll('a[href], video[src], video source[src], img[src]').forEach(el => {
       const url = el.href || el.currentSrc || el.src;
       const filename = el.getAttribute('download') || el.getAttribute('title') || el.getAttribute('alt') || '';
-      if (captureFileAsset({ url, filename, mimeType: el.type || '' })) count++;
+      const card = findNearestFileCard(el);
+      const cardLocator = getCardLocator(card);
+      if (captureFileAsset({ url, filename, mimeType: el.type || '', cardLocator })) count++;
     });
     return count;
   }
@@ -1113,6 +1130,34 @@
       .filter(el => !isGidElement(el) && !el.closest('[role="dialog"]'));
   }
 
+  function findNearestFileCard(el) {
+    let card = el;
+    for (let depth = 0; card && depth < 12; depth++, card = card.parentElement) {
+      if (isGidElement(card) || card.closest('[role="dialog"]')) continue;
+      const buttonCount = card.querySelectorAll?.('button').length || 0;
+      if (buttonCount > 0 && buttonCount <= 5 && findMoreOptionsButton(card)) return card;
+    }
+    return null;
+  }
+
+  function getCardLocator(card) {
+    if (!card) return null;
+    for (const attribute of ['data-file-id', 'data-asset-id', 'data-id']) {
+      const value = card.getAttribute(attribute);
+      if (value) return { attribute, value };
+    }
+    return null;
+  }
+
+  function cssAttributeEscape(value) {
+    return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  }
+
+  function findCardByLocator(locator) {
+    if (!locator?.attribute || !locator?.value) return null;
+    return document.querySelector(`[${locator.attribute}="${cssAttributeEscape(locator.value)}"]`);
+  }
+
   function comparableUrl(value) {
     if (!value) return '';
     try {
@@ -1145,6 +1190,8 @@
   function findFileRow(item) {
     const targetName = fileDisplayName(item).trim().toLowerCase();
     const targetId = String(item.id || '').replace(/^file:/, '');
+    const located = findCardByLocator(item.cardLocator);
+    if (located && !isGidElement(located) && !located.closest('[role="dialog"]')) return located;
     const ranked = [];
     for (const row of fileRowCandidates()) {
       const attrs = [row.getAttribute('data-file-id'), row.getAttribute('data-asset-id'), row.getAttribute('data-id')].filter(Boolean);
@@ -1190,17 +1237,70 @@
     }) || null;
   }
 
+  async function clickLikeUser(element) {
+    if (!element) return false;
+    element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    await sleep(120);
+    element.focus?.({ preventScroll: true });
+    const options = { bubbles: true, cancelable: true, view: window };
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach(type => {
+      const EventType = type.startsWith('pointer') && window.PointerEvent ? PointerEvent : MouseEvent;
+      element.dispatchEvent(new EventType(type, options));
+    });
+    element.click();
+    return true;
+  }
+
+  async function waitForDeleteMenuAction(timeout = 1800) {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      const action = findDeleteMenuAction();
+      if (action) return action;
+      await sleep(80);
+    }
+    return null;
+  }
+
+  async function runFilesMenuTest() {
+    if (state.sourceMode !== 'files' || !isFilesPage()) {
+      setStatus('Switch to Files & Assets and keep the Grok Files page open before testing the three-dot menu.', 'warning');
+      return;
+    }
+    const item = getActiveItems()[0];
+    if (!item) {
+      setStatus('Fetch your Files & Assets library before testing the three-dot menu.', 'warning');
+      return;
+    }
+    const row = findFileRow(item);
+    if (!row) {
+      setStatus(`Menu test failed: could not match the rendered card for ${fileDisplayName(item) || 'the first file'}.`, 'error');
+      return;
+    }
+    const trigger = findMoreOptionsButton(row);
+    if (!trigger) {
+      setStatus(`Menu test failed: matched ${fileDisplayName(item) || 'the file'}, but could not identify its three-dot button.`, 'error');
+      return;
+    }
+    setStatus(`Testing the three-dot menu for ${fileDisplayName(item) || 'the first file'}…`);
+    await clickLikeUser(trigger);
+    const deleteAction = await waitForDeleteMenuAction();
+    if (!deleteAction) {
+      setStatus(`Menu test failed: clicked the three-dot button for ${fileDisplayName(item) || 'the file'}, but no visible Delete option appeared.`, 'error');
+      return;
+    }
+    setStatus(`Menu test passed: matched ${fileDisplayName(item) || 'the file'} and found its visible Delete option. The menu is left open; no file was deleted.`, 'success');
+  }
+
   async function openFileDeleteFlow(item) {
     const row = findFileRow(item);
     const direct = findDirectDeleteButton(row);
-    if (direct) { direct.click(); return true; }
+    if (direct) { await clickLikeUser(direct); return true; }
 
     const menuTrigger = findMoreOptionsButton(row);
     if (menuTrigger) {
-      menuTrigger.click();
-      await sleep(250);
-      const menuDelete = findDeleteMenuAction();
-      if (menuDelete) { menuDelete.click(); return true; }
+      await clickLikeUser(menuTrigger);
+      const menuDelete = await waitForDeleteMenuAction();
+      if (menuDelete) { await clickLikeUser(menuDelete); return true; }
     }
 
     // Do not use a page-global Delete fallback: it could target another asset
@@ -1344,7 +1444,7 @@
   }
 
   function setButtonsDisabled(disabled) {
-    ['gid-btn-fetch', 'gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker', 'gid-btn-reconnect'].forEach(id => {
+    ['gid-btn-fetch', 'gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker', 'gid-btn-reconnect', 'gid-btn-test-file-menu'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.disabled = disabled;
     });
@@ -2170,7 +2270,8 @@
         <div style="font-size:11px;color:#475569;margin:-4px 0 10px;padding:0 2px">⚠️ <strong style="color:#fbbf24">All posts</strong> mode uses a hard delete — items are permanently removed from Grok's servers.</div>
         <div id="gid-files-helper" style="${state.sourceMode === 'files' ? '' : 'display:none'};margin:-2px 0 10px;padding:10px;border:1px solid rgba(56,189,248,.25);border-radius:9px;background:rgba(14,116,144,.10)">
           <div style="font-size:11px;line-height:1.45;color:#bae6fd">Open Grok’s <strong>See files and assets / Manage</strong> view once. This script remembers each downloadable URL it sees there. In this mode, successful local downloads are then permanently deleted from Grok one file at a time.</div>
-          <button class="gid-btn gid-btn-secondary" id="gid-btn-open-files" style="margin:8px 0 0;padding:7px 10px;font-size:11px">Open Files & Assets</button>
+          <button class="gid-btn gid-btn-secondary" id="gid-btn-open-files" style="margin:8px 0 0;padding:7px 10px;font-size:11px">Open Files &amp; Assets</button>
+          <button class="gid-btn gid-btn-secondary" id="gid-btn-test-file-menu" disabled style="margin:6px 0 0;padding:7px 10px;font-size:11px">⌁ Test Three-Dot Delete Menu (No Deletion)</button>
         </div>
 
         <div class="gid-section-label">Filter (applies when no selection active)</div>
@@ -2363,7 +2464,7 @@
         updateStat('unfavorited', '—');
         const fetchMode = state.sourceMode === 'all' ? 'all posts (Imagine + agent-created)' : (state.sourceMode === 'files' ? 'captured Files & Assets' : 'favorites');
         setStatus(`Source changed to ${fetchMode}. Fetch your library to continue.`);
-        ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker'].forEach(id => {
+        ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker', 'gid-btn-test-file-menu'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.disabled = true;
         });
@@ -2384,6 +2485,9 @@
         window.location.href = 'https://grok.com/files';
       });
     }
+
+    const menuTestBtn = document.getElementById('gid-btn-test-file-menu');
+    if (menuTestBtn) menuTestBtn.addEventListener('click', runFilesMenuTest);
 
     // Filter buttons
     ['all', 'images', 'videos'].forEach(type => {
@@ -2428,9 +2532,9 @@
       await doFetch();
       const hasItems = state.posts.length > 0;
       const enabledIds = state.sourceMode === 'files'
-        ? ['gid-btn-download', 'gid-btn-dryrun', 'gid-btn-picker']
+        ? ['gid-btn-download', 'gid-btn-dryrun', 'gid-btn-picker', 'gid-btn-test-file-menu']
         : ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker'];
-      ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker'].forEach(id => {
+      ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker', 'gid-btn-test-file-menu'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = !enabledIds.includes(id) || !hasItems;
       });
