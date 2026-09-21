@@ -20,4 +20,8 @@
 - [x] Validate the interface, update changelog, checkpoint, and synchronize GitHub.
 - [x] Assess whether a live browser simulation is available without accessing the user’s files.
 - [x] Implement a user-like three-dot interaction and non-destructive card-menu test.
-- [ ] Publish v1.0.12, then run the no-delete menu test in the user’s Grok Files session and report its exact result.
+- [x] Publish v1.0.12 and add the non-destructive three-dot menu diagnostic.
+- [x] Diagnose the reported Files & Assets batch stall caused by unbounded `GM_download` waits and potentially stale captured URLs.
+- [x] Implement v1.0.13: fresh document-start Files capture (Fetch + XHR), a fresh cache, bounded download outcomes, cancellation, and per-item reconnect checkpoints.
+- [x] Validate userscript syntax, the download success/error/cancel paths, and the production landing build.
+- [ ] Publish v1.0.13, then test a one-file Files batch in the user’s authenticated Grok session. Confirm the audit trail advances or report its explicit failure reason before attempting a larger batch.

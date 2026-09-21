@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.12
-// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files mode includes a per-card three-dot delete test and reliable card-locator capture.
+// @version      1.0.13
+// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files mode captures fresh URLs at page start and never waits indefinitely for a download callback.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
@@ -16,7 +16,7 @@
 // @connect      assets.grok.com
 // @connect      imagine-public.x.ai
 // @connect      *
-// @run-at       document-idle
+// @run-at       document-start
 // @license      MIT
 // ==/UserScript==
 
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.12';
+  const SCRIPT_VERSION = '1.0.13';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -39,12 +39,17 @@
     { value: 'all',       label: '🌐 All posts (incl. agent-created)', desc: 'All images/videos Grok ever created for you — Imagine + conversations.' },
     { value: 'files',     label: '📁 Files & assets (Manage)', desc: 'Downloadable files and media discovered on Grok’s See files and assets / Manage page.' },
   ];
-  const FILE_ASSET_CACHE_KEY = 'gidFileAssetCache';
+  // Start a fresh cache in v1.0.13. Previous builds could retain short-lived
+  // signed URLs after the Grok Files page had been reloaded.
+  const FILE_ASSET_CACHE_KEY = 'gidFileAssetCacheV2';
   const MAX_FILE_ASSET_CACHE = 6000;
   const MAX_VISIBLE_FILE_STATUS_ROWS = 200;
   const PAGE_SIZE = 40;
   const DOWNLOAD_DELAY_MS = 350;
   const UNFAVORITE_DELAY_MS = 200;
+  const DOWNLOAD_NO_SIGNAL_TIMEOUT_MS = 90000;
+  const DOWNLOAD_STALL_TIMEOUT_MS = 90000;
+  const DOWNLOAD_ABSOLUTE_TIMEOUT_MS = 10 * 60 * 1000;
 
   const FOLDER_PRESETS = [
     { label: 'grok-imagine (default)', value: 'grok-imagine' },
@@ -75,6 +80,7 @@
     batchLimit: GM_getValue('batchLimit', 0),   // 0 = no limit (all)
     sourceMode: GM_getValue('sourceMode', 'favorites'), // 'favorites' | 'all'
     fileAssetCache: GM_getValue(FILE_ASSET_CACHE_KEY, []),
+    activeDownload: null,
     filterType: 'all',
     dryRunMode: GM_getValue('dryRunMode', false),
     // Resume / reconnect state
@@ -912,11 +918,15 @@
     // card scans have the locator needed for the three-dot control. Keep both.
     const enriched = {
       ...existing,
+      id: asset.id || existing.id,
+      postId: asset.postId || existing.postId,
       originalFilename: asset.originalFilename || existing.originalFilename,
       cardLocator: asset.cardLocator || existing.cardLocator,
       thumbUrl: asset.thumbUrl || existing.thumbUrl,
+      mimeType: asset.mimeType || existing.mimeType,
+      createTime: asset.createTime || existing.createTime,
     };
-    if (enriched.cardLocator !== existing.cardLocator || enriched.originalFilename !== existing.originalFilename || enriched.thumbUrl !== existing.thumbUrl) {
+    if (enriched.id !== existing.id || enriched.cardLocator !== existing.cardLocator || enriched.originalFilename !== existing.originalFilename || enriched.thumbUrl !== existing.thumbUrl || enriched.mimeType !== existing.mimeType || enriched.createTime !== existing.createTime) {
       persistFileAssets([enriched]);
     }
     return true;
@@ -941,35 +951,91 @@
       const url = el.href || el.currentSrc || el.src;
       const filename = el.getAttribute('download') || el.getAttribute('title') || el.getAttribute('alt') || '';
       const card = findNearestFileCard(el);
+      // Do not cache page chrome, avatars, or unrelated images. A DOM-derived
+      // URL is useful only when it belongs to a rendered Files asset card.
+      if (!card) return;
       const cardLocator = getCardLocator(card);
       if (captureFileAsset({ url, filename, mimeType: el.type || '', cardLocator })) count++;
     });
     return count;
   }
 
+  function captureFilesXhrResponse(xhr) {
+    if (!isFilesPage()) return;
+    try {
+      const contentType = xhr.getResponseHeader('content-type') || '';
+      if (!contentType.includes('application/json')) return;
+      const payload = xhr.responseType === 'json' ? xhr.response : JSON.parse(xhr.responseText);
+      captureFileAssetsFromPayload(payload);
+    } catch (_) {}
+  }
+
+  function observeFilesPageDom(pageWindow) {
+    if (!isFilesPage() || !document.documentElement || pageWindow.__gidFilesDomObserver) return;
+    pageWindow.__gidFilesDomObserver = new MutationObserver(() => scanFilesPageDom());
+    pageWindow.__gidFilesDomObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['href', 'src'],
+    });
+    setTimeout(scanFilesPageDom, 1200);
+  }
+
   function installFilesAssetCapture() {
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    if (pageWindow.__gidFilesCaptureInstalled || !pageWindow.fetch) return;
-    pageWindow.__gidFilesCaptureInstalled = true;
-    const originalFetch = pageWindow.fetch.bind(pageWindow);
-    pageWindow.fetch = async function(...args) {
-      const response = await originalFetch(...args);
-      try {
-        if (isFilesPage()) {
-          const contentType = response.headers.get('content-type') || '';
-          if (contentType.includes('application/json')) {
-            response.clone().json().then(payload => captureFileAssetsFromPayload(payload)).catch(() => {});
-          }
-        }
-      } catch (_) {}
-      return response;
-    };
-    document.addEventListener('click', () => setTimeout(scanFilesPageDom, 500), true);
-    if (isFilesPage()) {
-      const observer = new MutationObserver(() => scanFilesPageDom());
-      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['href', 'src'] });
-      setTimeout(scanFilesPageDom, 1200);
+    if (!pageWindow.__gidFilesCaptureInstalled) {
+      pageWindow.__gidFilesCaptureInstalled = true;
+      if (pageWindow.fetch) {
+        const originalFetch = pageWindow.fetch.bind(pageWindow);
+        pageWindow.fetch = async function(...args) {
+          const response = await originalFetch(...args);
+          try {
+            if (isFilesPage()) {
+              const contentType = response.headers.get('content-type') || '';
+              if (contentType.includes('application/json')) {
+                response.clone().json().then(payload => captureFileAssetsFromPayload(payload)).catch(() => {});
+              }
+            }
+          } catch (_) {}
+          return response;
+        };
+      }
+      // Some Grok builds populate Files through XMLHttpRequest rather than
+      // fetch. Capture both transports before the page application starts.
+      const XHR = pageWindow.XMLHttpRequest;
+      if (XHR?.prototype) {
+        const originalSend = XHR.prototype.send;
+        XHR.prototype.send = function(...args) {
+          this.addEventListener('loadend', () => captureFilesXhrResponse(this), { once: true });
+          return originalSend.apply(this, args);
+        };
+      }
+      document.addEventListener('click', () => {
+        setTimeout(() => {
+          observeFilesPageDom(pageWindow);
+          scanFilesPageDom();
+        }, 500);
+      }, true);
+      document.addEventListener('DOMContentLoaded', () => observeFilesPageDom(pageWindow), { once: true });
     }
+    observeFilesPageDom(pageWindow);
+  }
+
+  function clearCapturedFilesAndReload() {
+    if (!isFilesPage()) {
+      setStatus('Open Grok’s Files & Assets page before refreshing the captured URLs.', 'warning');
+      return;
+    }
+    state.fileAssetCache = [];
+    state.posts = [];
+    state.selectedIds.clear();
+    state.useSelection = false;
+    GM_setValue(FILE_ASSET_CACHE_KEY, []);
+    updateSelectionBanner();
+    updateStat('total', '—');
+    setStatus('Cleared the old Files URL cache. Reloading to capture fresh URLs…');
+    setTimeout(() => window.location.reload(), 250);
   }
 
   // ─── API ──────────────────────────────────────────────────────────────────
@@ -1093,17 +1159,98 @@
   }
 
   // ─── Download ─────────────────────────────────────────────────────────────
-  function downloadItem(item) {
+  function formatBytes(value) {
+    if (!Number.isFinite(value) || value < 0) return '';
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  function downloadFailureReason(download) {
+    const code = download?.error || '';
+    const detail = download?.details ? `: ${download.details}` : '';
+    if (code === 'not_whitelisted') return { reason: 'Tampermonkey blocked this file extension. Add the extension to Tampermonkey Settings → Downloads, then reconnect.', pauseBatch: true };
+    if (code === 'not_permitted') return { reason: 'Tampermonkey does not have browser download permission. Enable its Downloads permission, then reconnect.', pauseBatch: true };
+    if (code === 'not_enabled') return { reason: 'Tampermonkey downloads are disabled. Enable Downloads in Tampermonkey settings, then reconnect.', pauseBatch: true };
+    if (code === 'not_supported') return { reason: 'This browser does not support Tampermonkey downloads.', pauseBatch: true };
+    return { reason: code ? `Tampermonkey download failed (${code}${detail}).` : 'Tampermonkey did not start the download.', pauseBatch: false };
+  }
+
+  function downloadItem(item, onProgress) {
     return new Promise((resolve) => {
       const filename = `${state.downloadFolder}/${buildFilename(item)}`;
-      GM_download({
-        url: item.url,
-        name: filename,
-        saveAs: false,
-        onload: () => resolve(true),
-        onerror: () => resolve(false),
-        ontimeout: () => resolve(false),
-      });
+      let settled = false;
+      let noSignalTimer;
+      let stallTimer;
+      let absoluteTimer;
+      let handle;
+      let lastProgressAt = 0;
+
+      const clearTimers = () => {
+        clearTimeout(noSignalTimer);
+        clearTimeout(stallTimer);
+        clearTimeout(absoluteTimer);
+      };
+      const finish = (ok, reason = '', pauseBatch = false) => {
+        if (settled) return;
+        settled = true;
+        clearTimers();
+        if (state.activeDownload?.handle === handle) state.activeDownload = null;
+        resolve({ ok, reason, pauseBatch });
+      };
+      const stopForNoSignal = () => {
+        try { handle?.abort?.(); } catch (_) {}
+        finish(false, 'No download completion or progress signal after 90 seconds. Check your browser Downloads shelf and turn off “Ask where to save each file,” then reconnect.', true);
+      };
+      const resetStallTimer = () => {
+        clearTimeout(noSignalTimer);
+        clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => {
+          try { handle?.abort?.(); } catch (_) {}
+          finish(false, 'Download progress stopped for 90 seconds. The file was retained on Grok; reconnect to retry it.', true);
+        }, DOWNLOAD_STALL_TIMEOUT_MS);
+      };
+
+      try {
+        handle = GM_download({
+          url: item.url,
+          name: filename,
+          saveAs: false,
+          conflictAction: 'uniquify',
+          onload: () => finish(true),
+          onerror: download => {
+            const failure = downloadFailureReason(download);
+            finish(false, failure.reason, failure.pauseBatch);
+          },
+          ontimeout: () => finish(false, 'Tampermonkey timed out while downloading this file.', true),
+          onprogress: progress => {
+            resetStallTimer();
+            const now = Date.now();
+            if (now - lastProgressAt < 350) return;
+            lastProgressAt = now;
+            const loaded = Number(progress?.loaded || 0);
+            const total = Number(progress?.total || 0);
+            const percent = total > 0 ? ` (${Math.min(100, Math.round((loaded / total) * 100))}%)` : '';
+            onProgress?.(`Downloading${total > 0 ? ` ${formatBytes(loaded)} of ${formatBytes(total)}` : loaded > 0 ? ` ${formatBytes(loaded)}` : ''}${percent}…`);
+          },
+        });
+        if (settled) return;
+        state.activeDownload = {
+          handle,
+          abort: () => {
+            try { handle?.abort?.(); } catch (_) {}
+            finish(false, 'Cancelled before the browser confirmed the local download.');
+          },
+        };
+        noSignalTimer = setTimeout(stopForNoSignal, DOWNLOAD_NO_SIGNAL_TIMEOUT_MS);
+        absoluteTimer = setTimeout(() => {
+          try { handle?.abort?.(); } catch (_) {}
+          finish(false, 'Download exceeded the 10-minute safety limit. The file was retained on Grok; reconnect to retry it.', true);
+        }, DOWNLOAD_ABSOLUTE_TIMEOUT_MS);
+      } catch (error) {
+        finish(false, `Could not start the Tampermonkey download: ${error?.message || error}`);
+      }
     });
   }
 
@@ -1836,7 +1983,7 @@
     try { ids = JSON.parse(state.resumePostIds); } catch { clearResume(); return; }
     const remaining = ids.length - state.resumeIndex;
     if (remaining <= 0) { clearResume(); return; }
-    const opLabel = state.resumeOp === 'download' ? 'Download' : state.resumeOp === 'unfavorite' ? 'Unfavorite' : 'Download + Unfavorite';
+    const opLabel = state.resumeOp === 'files-delete' ? 'Files download + delete' : state.resumeOp === 'download' ? 'Download' : state.resumeOp === 'unfavorite' ? 'Unfavorite' : 'Download + Unfavorite';
     desc.textContent = `${opLabel} — ${remaining} of ${ids.length} items remaining`;
     banner.classList.add('visible');
   }
@@ -2006,8 +2153,8 @@
       }
       const item = items[i];
       setFileStatus(item, 'downloading', 'Saving to your selected Downloads folder…');
-      const downloaded = await downloadItem(item);
-      if (downloaded) {
+      const download = await downloadItem(item, detail => setFileStatus(item, 'downloading', detail));
+      if (download.ok) {
         state.downloadedCount++;
         setFileStatus(item, 'downloaded', 'Local download confirmed; locating the Grok card…');
         setFileStatus(item, 'deleting', 'Opening the three-dot menu and confirming Delete…');
@@ -2021,7 +2168,7 @@
         }
       } else {
         state.failedCount++;
-        setFileStatus(item, 'failed', 'Browser download failed or timed out; retained on Grok.');
+        setFileStatus(item, 'failed', `${download.reason || 'Browser download failed or timed out.'} Retained on Grok.`);
       }
       updateStat('downloaded', state.downloadedCount);
       updateStat('unfavorited', state.unfavoritedCount);
@@ -2029,7 +2176,20 @@
         ((i + 1) / items.length) * 100,
         `${i + 1} / ${items.length} — ${state.downloadedCount} saved, ${state.unfavoritedCount} deleted${state.failedCount ? `, ${state.failedCount} failed` : ''}`
       );
-      if (i % 5 === 4) saveResume('files-delete', startOffset + i + 1, allItems);
+      // Checkpoint every completed file so a retry never waits on a stale
+      // in-flight item or repeats an already-confirmed deletion.
+      saveResume('files-delete', startOffset + i + 1, allItems);
+      if (download.pauseBatch && !state.cancelRequested) {
+        // A browser/Tampermonkey configuration issue or a stalled transfer will
+        // affect every remaining item. Stop after the first concrete failure
+        // instead of making the user wait through the same failure repeatedly.
+        state.cancelRequested = true;
+        saveResume('files-delete', startOffset + i, allItems);
+        pauseQueuedFileStatuses(i + 1);
+        setStatus(`Paused after ${fileDisplayName(item) || 'the first file'}: ${download.reason} Fix the browser download issue, then use Reconnect to retry it.`, 'warning');
+        updateReconnectBanner();
+        break;
+      }
       await sleep(DOWNLOAD_DELAY_MS);
     }
 
@@ -2061,8 +2221,8 @@
         updateReconnectBanner();
         break;
       }
-      const ok = await downloadItem(items[i]);
-      if (ok) state.downloadedCount++; else state.failedCount++;
+      const download = await downloadItem(items[i]);
+      if (download.ok) state.downloadedCount++; else state.failedCount++;
       setProgress(((i + 1) / items.length) * 100, `${i + 1} / ${items.length} — ${state.downloadedCount} saved, ${state.failedCount} failed`);
       updateStat('downloaded', state.downloadedCount);
       // Save checkpoint every 10 items
@@ -2169,6 +2329,7 @@
 
     // Track which files per post have been downloaded
     const postDownloaded = new Map(); // postId -> count of downloaded files
+    const postFailures = new Set();   // postIds with at least one failed download
     const postTotal = new Map();      // postId -> total files expected
     for (const [pid, group] of postGroups) postTotal.set(pid, group.length);
 
@@ -2187,8 +2348,11 @@
       }
 
       const item = items[i];
-      const ok = await downloadItem(item);
-      if (ok) state.downloadedCount++; else state.failedCount++;
+      const download = await downloadItem(item);
+      if (download.ok) state.downloadedCount++; else {
+        state.failedCount++;
+        postFailures.add(item.postId);
+      }
       processed++;
 
       // Track per-post download completion
@@ -2196,7 +2360,7 @@
       postDownloaded.set(item.postId, doneForPost);
 
       // Unfavorite this post immediately once all its files are downloaded
-      if (doneForPost >= postTotal.get(item.postId)) {
+      if (doneForPost >= postTotal.get(item.postId) && !postFailures.has(item.postId)) {
         const removeOk = await removePost(item.postId);
         if (removeOk) state.unfavoritedCount++;
         updateStat('unfavorited', state.unfavoritedCount);
@@ -2269,8 +2433,9 @@
         </div>
         <div style="font-size:11px;color:#475569;margin:-4px 0 10px;padding:0 2px">⚠️ <strong style="color:#fbbf24">All posts</strong> mode uses a hard delete — items are permanently removed from Grok's servers.</div>
         <div id="gid-files-helper" style="${state.sourceMode === 'files' ? '' : 'display:none'};margin:-2px 0 10px;padding:10px;border:1px solid rgba(56,189,248,.25);border-radius:9px;background:rgba(14,116,144,.10)">
-          <div style="font-size:11px;line-height:1.45;color:#bae6fd">Open Grok’s <strong>See files and assets / Manage</strong> view once. This script remembers each downloadable URL it sees there. In this mode, successful local downloads are then permanently deleted from Grok one file at a time.</div>
+          <div style="font-size:11px;line-height:1.45;color:#bae6fd">Open Grok’s <strong>See files and assets / Manage</strong> view and refresh it after installing this version. The script captures fresh download URLs as the page loads. Successful local downloads are then permanently deleted from Grok one file at a time.</div>
           <button class="gid-btn gid-btn-secondary" id="gid-btn-open-files" style="margin:8px 0 0;padding:7px 10px;font-size:11px">Open Files &amp; Assets</button>
+          <button class="gid-btn gid-btn-secondary" id="gid-btn-refresh-file-capture" style="margin:6px 0 0;padding:7px 10px;font-size:11px">↻ Clear &amp; Refresh Files URLs</button>
           <button class="gid-btn gid-btn-secondary" id="gid-btn-test-file-menu" disabled style="margin:6px 0 0;padding:7px 10px;font-size:11px">⌁ Test Three-Dot Delete Menu (No Deletion)</button>
         </div>
 
@@ -2485,6 +2650,8 @@
         window.location.href = 'https://grok.com/files';
       });
     }
+    const refreshFileCaptureBtn = document.getElementById('gid-btn-refresh-file-capture');
+    if (refreshFileCaptureBtn) refreshFileCaptureBtn.addEventListener('click', clearCapturedFilesAndReload);
 
     const menuTestBtn = document.getElementById('gid-btn-test-file-menu');
     if (menuTestBtn) menuTestBtn.addEventListener('click', runFilesMenuTest);
@@ -2547,11 +2714,16 @@
 
     document.getElementById('gid-btn-cancel').addEventListener('click', () => {
       state.cancelRequested = true;
+      state.activeDownload?.abort?.();
       setStatus('Cancelling…', 'warning');
     });
   }
 
   // ─── Init ─────────────────────────────────────────────────────────────────
+  // Install network observers at document-start so the first Files-page API
+  // response is captured instead of relying on stale URLs from a prior visit.
+  installFilesAssetCapture();
+
   function init() {
     if (document.getElementById('gid-panel')) return;
     installFilesAssetCapture();

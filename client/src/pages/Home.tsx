@@ -7,23 +7,35 @@
  */
 
 import { useState } from "react";
-import { motion } from "framer-motion";
+import { motion, type Variants } from "framer-motion";
 
 const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/hero-bg-3WyWRMW5WZoB6TWmYp9h57.webp";
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.12";
+const SCRIPT_VERSION = "1.0.13";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.12",
-    date: "Aug 2026",
+    version: "1.0.13",
+    date: "Sep 2026",
     tag: "latest",
     tagColor: "#6366f1",
+    changes: [
+      { type: "fix", text: "Files & Assets now begins collecting its fresh download URLs at document start and captures both Fetch and XMLHttpRequest traffic, rather than relying on URLs seen on a previous visit." },
+      { type: "fix", text: "A Files download can no longer process forever: every item has a 90-second no-signal/stall guard and a 10-minute absolute safety limit. Failures are shown in the audit trail and remain on Grok." },
+      { type: "new", text: "Added Clear & Refresh Files URLs. It clears the old Files cache and reloads Grok’s Manage page so the next batch uses a current page session." },
+      { type: "improve", text: "Download conflicts use unique filenames, Cancel aborts the active browser download, and Files reconnect checkpoints after every completed item." },
+    ],
+  },
+  {
+    version: "1.0.12",
+    date: "Aug 2026",
+    tag: "previous",
+    tagColor: "#475569",
     changes: [
       { type: "new", text: "Added a non-destructive “Test Three-Dot Delete Menu” control in Files & Assets mode. It matches one item, opens its card menu, confirms a visible Delete option, and never sends a deletion." },
       { type: "fix", text: "The Files scanner now retains card-level data-file/data-asset identifiers alongside the captured download URL, giving later deletion runs a stable card locator instead of relying only on filename text." },
@@ -176,12 +188,12 @@ const changelog = [
   },
 ];
 
-const fadeUp = {
+const fadeUp: Variants = {
   hidden: { opacity: 0, y: 24 },
   visible: (i = 0) => ({
     opacity: 1,
     y: 0,
-    transition: { delay: i * 0.08, duration: 0.5, ease: "easeOut" },
+    transition: { delay: i * 0.08, duration: 0.5, ease: [0.23, 1, 0.32, 1] },
   }),
 };
 
