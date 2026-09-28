@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.19
+// @version      1.0.20
 // @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files deletion uses Grok's native per-card Download action, then the same card's confirmed Delete action.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.19';
+  const SCRIPT_VERSION = '1.0.20';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -54,6 +54,7 @@
   // does not expose a completion callback to a userscript. Wait for that
   // handoff before opening the matching card's Delete flow.
   const NATIVE_DOWNLOAD_HANDOFF_MS = 1500;
+  const FILE_ACTION_MENU_TIMEOUT_MS = 2500;
 
   const FOLDER_PRESETS = [
     { label: 'grok-imagine (default)', value: 'grok-imagine' },
@@ -1475,7 +1476,7 @@
     return nodes.find(node => {
       if (isGidElement(node) || node.closest('[role="dialog"]') || !isVisibleElement(node)) return false;
       const label = `${node.getAttribute('aria-label') || ''} ${node.textContent || ''}`.trim().toLowerCase();
-      return /^(delete|delete\s+(file|asset|item))$/.test(label) && label.length < 80;
+      return /\bdelete\b/.test(label) && label.length < 80;
     }) || null;
   }
 
@@ -1484,20 +1485,34 @@
     return nodes.find(node => {
       if (isGidElement(node) || node.closest('[role="dialog"]') || !isVisibleElement(node)) return false;
       const label = `${node.getAttribute('aria-label') || ''} ${node.textContent || ''}`.trim().toLowerCase();
-      return /^(download|download\s+(file|asset|item))$/.test(label) && label.length < 80;
+      return /\bdownload\b/.test(label) && label.length < 80;
     }) || null;
   }
 
   function clickLikeUser(element) {
     if (!element || !element.isConnected) return false;
     try {
-      // Calling the native control directly is the reliable equivalent of a
-      // click for Grok's React/Radix controls.  The earlier synthetic pointer
-      // sequence waited on a sandbox timer before reaching .click(), which
-      // left the live non-destructive diagnostic indefinitely at "Testing…".
+      // Grok uses Radix menu triggers. Those handlers open on pointerdown,
+      // while HTMLElement.click() dispatches only click and leaves the menu
+      // closed. Dispatch the entire synchronous pointer/mouse activation path
+      // against this already-matched native control.
       element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
       element.focus?.({ preventScroll: true });
-      element.click();
+      const rect = element.getBoundingClientRect();
+      const common = {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        button: 0,
+        clientX: rect.left + Math.max(1, rect.width / 2),
+        clientY: rect.top + Math.max(1, rect.height / 2),
+      };
+      const Pointer = window.PointerEvent || window.MouseEvent;
+      element.dispatchEvent(new Pointer('pointerdown', { ...common, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+      element.dispatchEvent(new MouseEvent('mousedown', { ...common, buttons: 1 }));
+      element.dispatchEvent(new Pointer('pointerup', { ...common, buttons: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+      element.dispatchEvent(new MouseEvent('mouseup', { ...common, buttons: 0 }));
+      element.dispatchEvent(new MouseEvent('click', { ...common, buttons: 0 }));
       return true;
     } catch (_) {
       return false;
@@ -1505,15 +1520,17 @@
   }
 
   async function waitForMenuAction(findAction) {
-    // Radix menus often mount on the next animation frame rather than in the
-    // click's microtask. Poll a small number of frames only; never fall back
-    // to a page-global action that could operate on another card.
-    for (let frame = 0; frame < 12; frame++) {
+    // A Radix menu can mount after the click handler's task and animate into
+    // visibility.  The prior 12-frame (~200ms) probe was too short in Grok's
+    // live UI. Wait a bounded 2.5 seconds, polling only the active page DOM.
+    // This never broadens the matching scope beyond an already matched card.
+    const deadline = Date.now() + FILE_ACTION_MENU_TIMEOUT_MS;
+    while (Date.now() < deadline) {
       const action = findAction();
       if (action) return action;
-      await new Promise(resolve => requestAnimationFrame(resolve));
+      await sleep(50);
     }
-    return null;
+    return findAction();
   }
 
   async function waitForDeleteMenuAction() {
