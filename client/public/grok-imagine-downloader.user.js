@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.17
-// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files mode captures named asset URLs, supports safe download-only verification, and offers a persistent minimizable sidebar.
+// @version      1.0.18
+// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files deletion uses Grok's native per-card Download action, then the same card's confirmed Delete action.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.17';
+  const SCRIPT_VERSION = '1.0.18';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -50,6 +50,10 @@
   const DOWNLOAD_NO_SIGNAL_TIMEOUT_MS = 90000;
   const DOWNLOAD_STALL_TIMEOUT_MS = 90000;
   const DOWNLOAD_ABSOLUTE_TIMEOUT_MS = 10 * 60 * 1000;
+  // Grok's native Download action hands the transfer to the browser, which
+  // does not expose a completion callback to a userscript. Wait for that
+  // handoff before opening the matching card's Delete flow.
+  const NATIVE_DOWNLOAD_HANDOFF_MS = 1500;
 
   const FOLDER_PRESETS = [
     { label: 'grok-imagine (default)', value: 'grok-imagine' },
@@ -1439,6 +1443,16 @@
       .find(btn => !isGidElement(btn) && !btn.closest('[role="dialog"]')) || null;
   }
 
+  function findDirectDownloadButton(scope) {
+    if (!scope) return null;
+    return Array.from(scope.querySelectorAll('button, a[download]'))
+      .find(control => {
+        if (isGidElement(control) || control.closest('[role="dialog"]')) return false;
+        const label = `${control.getAttribute('aria-label') || ''} ${control.getAttribute('title') || ''} ${control.textContent || ''}`.trim().toLowerCase();
+        return /^(download|download\s+(file|asset|item))$/.test(label);
+      }) || null;
+  }
+
   function findMoreOptionsButton(scope) {
     if (!scope) return null;
     const controls = Array.from(scope.querySelectorAll('button')).filter(btn => !isGidElement(btn) && !btn.closest('[role="dialog"]'));
@@ -1465,6 +1479,15 @@
     }) || null;
   }
 
+  function findDownloadMenuAction() {
+    const nodes = Array.from(document.querySelectorAll('[role="menu"] *, [role="menuitem"], [role="option"], [data-radix-collection-item], button, a[download]'));
+    return nodes.find(node => {
+      if (isGidElement(node) || node.closest('[role="dialog"]') || !isVisibleElement(node)) return false;
+      const label = `${node.getAttribute('aria-label') || ''} ${node.textContent || ''}`.trim().toLowerCase();
+      return /^(download|download\s+(file|asset|item))$/.test(label) && label.length < 80;
+    }) || null;
+  }
+
   function clickLikeUser(element) {
     if (!element || !element.isConnected) return false;
     try {
@@ -1481,19 +1504,24 @@
     }
   }
 
-  async function waitForDeleteMenuAction() {
-    // React commits this menu in the same task or the immediately following
-    // microtask.  Avoid timer-based polling here: timers in the userscript
-    // sandbox can be paused while a remote browser session is being inspected.
-    let action = findDeleteMenuAction();
-    if (action) return action;
-    await Promise.resolve();
-    action = findDeleteMenuAction();
-    if (action) return action;
-    await Promise.resolve();
-    action = findDeleteMenuAction();
-    if (action) return action;
+  async function waitForMenuAction(findAction) {
+    // Radix menus often mount on the next animation frame rather than in the
+    // click's microtask. Poll a small number of frames only; never fall back
+    // to a page-global action that could operate on another card.
+    for (let frame = 0; frame < 12; frame++) {
+      const action = findAction();
+      if (action) return action;
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
     return null;
+  }
+
+  async function waitForDeleteMenuAction() {
+    return waitForMenuAction(findDeleteMenuAction);
+  }
+
+  async function waitForDownloadMenuAction() {
+    return waitForMenuAction(findDownloadMenuAction);
   }
 
   async function runFilesMenuTest() {
@@ -1548,6 +1576,29 @@
     // Do not use a page-global Delete fallback: it could target another asset
     // when the matching card cannot be established.
     return false;
+  }
+
+  async function invokeNativeFileDownload(item) {
+    if (!isFilesPage()) return { ok: false, reason: 'Open Grok’s Files & Assets page before starting Download + Delete.' };
+    const row = findFileRow(item);
+    if (!row) return { ok: false, reason: `Could not match the rendered Grok card for ${fileDisplayName(item) || 'this file'}.` };
+
+    const direct = findDirectDownloadButton(row);
+    if (direct) {
+      return clickLikeUser(direct)
+        ? { ok: true }
+        : { ok: false, reason: `Grok's native Download button could not be activated for ${fileDisplayName(item) || 'this file'}.` };
+    }
+
+    const menuTrigger = findMoreOptionsButton(row);
+    if (!menuTrigger || !clickLikeUser(menuTrigger)) {
+      return { ok: false, reason: `Could not open the File actions menu for ${fileDisplayName(item) || 'this file'}.` };
+    }
+    const downloadAction = await waitForDownloadMenuAction();
+    if (!downloadAction || !clickLikeUser(downloadAction)) {
+      return { ok: false, reason: `Grok did not expose a usable native Download action for ${fileDisplayName(item) || 'this file'}.` };
+    }
+    return { ok: true };
   }
 
   function findFileDeleteConfirmation(item) {
@@ -2246,7 +2297,7 @@
       setStatus('Open Grok’s Files & Assets page before starting Download + Delete.', 'warning');
       return;
     }
-    const confirmed = confirm(`Download and permanently delete ${items.length} file${items.length === 1 ? '' : 's'}?\n\nEach file is deleted from Grok only after its local download completes successfully. Failed downloads and files that cannot be matched to a Grok delete control are left on the server.\n\nProceed?`);
+    const confirmed = confirm(`Use Grok’s native Download action, then permanently delete ${items.length} file${items.length === 1 ? '' : 's'}?\n\nFor each selected card, this presses Grok’s own Download action, waits ${NATIVE_DOWNLOAD_HANDOFF_MS / 1000} seconds for the browser handoff, then opens Delete on that same card and requires Grok’s confirmation. Native browser downloads do not expose a completion callback, so ensure “Ask where to save each file” is off before continuing.\n\nProceed?`);
     if (!confirmed) return;
     await doDownloadAndDeleteFiles(items, items, 0);
   }
@@ -2264,7 +2315,7 @@
     state.unfavoritedCount = 0;
     setButtonsDisabled(true);
     setProgress(0, `0 / ${items.length}`);
-    setStatus(`Downloading and deleting ${items.length} Files & Assets items…`);
+    setStatus(`Using Grok’s native Download action, then deleting ${items.length} Files & Assets item${items.length === 1 ? '' : 's'}…`);
     resetFileStatuses(items);
     saveResume('files-delete', startOffset, allItems);
 
@@ -2277,11 +2328,13 @@
         break;
       }
       const item = items[i];
-      setFileStatus(item, 'downloading', 'Saving to your selected Downloads folder…');
-      const download = await downloadItem(item, detail => setFileStatus(item, 'downloading', detail));
+      setFileStatus(item, 'downloading', 'Opening this card’s native Grok Download action…');
+      const download = await invokeNativeFileDownload(item);
       if (download.ok) {
+        setFileStatus(item, 'downloading', `Native Download action invoked; waiting ${NATIVE_DOWNLOAD_HANDOFF_MS / 1000}s for the browser handoff…`);
+        await sleep(NATIVE_DOWNLOAD_HANDOFF_MS);
         state.downloadedCount++;
-        setFileStatus(item, 'downloaded', 'Local download confirmed; locating the Grok card…');
+        setFileStatus(item, 'downloaded', 'Native Download action invoked; locating that same Grok card for deletion…');
         setFileStatus(item, 'deleting', 'Opening the three-dot menu and confirming Delete…');
         const deletion = await deleteDownloadedFileFromGrok(item);
         if (deletion.ok) {
@@ -2293,7 +2346,7 @@
         }
       } else {
         state.failedCount++;
-        setFileStatus(item, 'failed', `${download.reason || 'Browser download failed or timed out.'} Retained on Grok.`);
+        setFileStatus(item, 'failed', `${download.reason || 'Native Grok Download action could not be invoked.'} Retained on Grok.`);
       }
       updateStat('downloaded', state.downloadedCount);
       updateStat('unfavorited', state.unfavoritedCount);
@@ -2571,7 +2624,7 @@
         </div>
         <div style="font-size:11px;color:#475569;margin:-4px 0 10px;padding:0 2px">⚠️ <strong style="color:#fbbf24">All posts</strong> mode uses a hard delete — items are permanently removed from Grok's servers.</div>
         <div id="gid-files-helper" style="${state.sourceMode === 'files' ? '' : 'display:none'};margin:-2px 0 10px;padding:10px;border:1px solid rgba(56,189,248,.25);border-radius:9px;background:rgba(14,116,144,.10)">
-          <div style="font-size:11px;line-height:1.45;color:#bae6fd">Open Grok’s <strong>See files and assets / Manage</strong> view and refresh it after installing this version. The script captures fresh download URLs as the page loads. Successful local downloads are then permanently deleted from Grok one file at a time.</div>
+          <div style="font-size:11px;line-height:1.45;color:#bae6fd">Open Grok’s <strong>See files and assets / Manage</strong> view and refresh it after installing this version. The script captures the matching cards as the page loads. <strong>Download + Delete</strong> uses Grok’s own Download action for each selected card, waits for the browser handoff, then opens Delete on that same card one at a time.</div>
           <button class="gid-btn gid-btn-secondary" id="gid-btn-open-files" style="margin:8px 0 0;padding:7px 10px;font-size:11px">Open Files &amp; Assets</button>
           <button class="gid-btn gid-btn-secondary" id="gid-btn-refresh-file-capture" style="margin:6px 0 0;padding:7px 10px;font-size:11px">↻ Clear &amp; Refresh Files URLs</button>
           <button class="gid-btn gid-btn-secondary" id="gid-btn-test-file-menu" disabled style="margin:6px 0 0;padding:7px 10px;font-size:11px">⌁ Test Three-Dot Delete Menu (No Deletion)</button>

@@ -13,17 +13,28 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.17";
+const SCRIPT_VERSION = "1.0.18";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.17",
+    version: "1.0.18",
     date: "Sep 2026",
     tag: "latest",
     tagColor: "#6366f1",
+    changes: [
+      { type: "fix", text: "Files Download + Delete now invokes Grok’s own per-card Download action rather than a separate direct-URL download." },
+      { type: "improve", text: "Each selected card follows a strict sequence: native Download → browser handoff wait → same-card Delete → Grok confirmation." },
+      { type: "improve", text: "If the matching card, native Download action, or Delete confirmation is unavailable, that item is retained and recorded as failed." },
+    ],
+  },
+  {
+    version: "1.0.17",
+    date: "Sep 2026",
+    tag: "previous",
+    tagColor: "#475569",
     changes: [
       { type: "new", text: "The downloader sidebar can now be minimized with its persistent header control and restored from a compact floating launcher." },
       { type: "improve", text: "The sidebar header stays visible while its contents scroll, keeping the minimize action and current version accessible at all times." },
