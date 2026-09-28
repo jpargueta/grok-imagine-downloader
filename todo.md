@@ -26,4 +26,6 @@
 - [x] Validate userscript syntax, the download success/error/cancel paths, and the production landing build.
 - [x] Publish v1.0.13, then test a one-file Files batch in the user’s authenticated Grok session. Confirm the audit trail advances or report its explicit failure reason before attempting a larger batch.
 - [x] Inspect the authenticated Grok Files DOM and correct v1.0.15 Files capture so it keeps card filenames and only direct asset URLs, rather than downloading page/preview URLs as anonymous files.
-- [ ] Update to v1.0.15, clear the old Files URL cache, fetch the refreshed library, then run one deliberately selected item to confirm local download, card menu match, and deletion audit outcomes.
+- [x] Verify the live Grok Files card structure: native `File actions` menu contains Download and Delete, while the v1.0.21 no-delete diagnostic safely fails for a background-cached, virtualized-out record.
+- [x] Implement v1.0.22: make the non-destructive menu diagnostic use a mounted native Files card and require verified card matches for Files actions.
+- [ ] Update to v1.0.22, run the non-destructive three-dot diagnostic, then use **Download Files — Keep on Grok** on one selected item and verify the local file matches the native card. Do not run Download + Delete until both checks pass.

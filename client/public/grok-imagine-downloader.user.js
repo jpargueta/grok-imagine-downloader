@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.21
+// @version      1.0.22
 // @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files deletion uses Grok's native per-card Download action, then the same card's confirmed Delete action.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.21';
+  const SCRIPT_VERSION = '1.0.22';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -1396,47 +1396,34 @@
   // the card that owns a destructive action.
   function fileActionCardCandidates() {
     return Array.from(document.querySelectorAll('button[aria-label="File actions"][aria-haspopup="menu"]'))
-      .filter(button => !isGidElement(button) && !button.closest('[role="dialog"]'))
-      .map(button => ({ button, card: button.parentElement }))
-      .filter(({ card }) => card && !isGidElement(card) && !card.closest('[role="dialog"]'));
+      .filter(button => !isGidElement(button) && !button.closest('[role="dialog"]') && button.parentElement)
+      .map(button => ({ button, card: button.parentElement }));
   }
 
-  function findFileActionCardByName(item) {
+  function isVerifiedFileActionCard(card) {
+    return !!card && !isGidElement(card) && !card.closest('[role="dialog"]') &&
+      !!card.querySelector('button[aria-label="File actions"][aria-haspopup="menu"]');
+  }
+
+  // A Files page can contain many generic names such as generated_video.mp4.
+  // A name-only match is permitted only when exactly one rendered native card
+  // has that exact display name.  Ties are deliberately left unmatched: a
+  // failed action is safer than deleting the wrong duplicate.
+  function findUniqueFileActionCardByName(item) {
     const targetName = fileDisplayName(item).trim().toLowerCase();
-    const targetId = String(item.id || '').replace(/^file:/, '').toLowerCase();
-    if (!targetName && !targetId) return null;
-    const ranked = [];
-    for (const { card } of fileActionCardCandidates()) {
-      const text = (card.innerText || '').trim().toLowerCase();
-      let score = 0;
-      if (targetId && text.includes(targetId)) score += 1000;
-      if (targetName && text.includes(targetName)) score += 100;
-      if (score) ranked.push({ card, score, size: text.length });
-    }
-    ranked.sort((a, b) => b.score - a.score || a.size - b.size);
-    return ranked[0]?.card || null;
+    if (!targetName) return null;
+    const matches = fileActionCardCandidates().filter(({ card }) =>
+      filenameFromCard(card).trim().toLowerCase() === targetName
+    );
+    return matches.length === 1 ? matches[0].card : null;
   }
 
   function findFileRow(item) {
-    const targetName = fileDisplayName(item).trim().toLowerCase();
-    const targetId = String(item.id || '').replace(/^file:/, '');
     const located = findCardByLocator(item.cardLocator);
-    if (located && !isGidElement(located) && !located.closest('[role="dialog"]') && findMoreOptionsButton(located)) return located;
+    if (isVerifiedFileActionCard(located)) return located;
     const byAssetUrl = findCardByAssetUrl(item);
-    if (byAssetUrl && findMoreOptionsButton(byAssetUrl)) return byAssetUrl;
-    const byVisibleActionCard = findFileActionCardByName(item);
-    if (byVisibleActionCard) return byVisibleActionCard;
-    const ranked = [];
-    for (const row of fileRowCandidates()) {
-      const attrs = [row.getAttribute('data-file-id'), row.getAttribute('data-asset-id'), row.getAttribute('data-id')].filter(Boolean);
-      const text = (row.innerText || '').trim().toLowerCase();
-      let score = 0;
-      if (targetId && attrs.some(value => value === targetId || value.endsWith(targetId))) score += 1000;
-      if (targetName && text.includes(targetName)) score += 100;
-      if (score) ranked.push({ row, score, size: text.length });
-    }
-    ranked.sort((a, b) => b.score - a.score || a.size - b.size);
-    return ranked[0]?.row || null;
+    if (isVerifiedFileActionCard(byAssetUrl)) return byAssetUrl;
+    return findUniqueFileActionCardByName(item);
   }
 
   function findDirectDeleteButton(scope) {
@@ -1547,33 +1534,28 @@
       setStatus('Switch to Files & Assets and keep the Grok Files page open before testing the three-dot menu.', 'warning');
       return;
     }
-    const item = getActiveItems()[0];
-    if (!item) {
-      setStatus('Fetch your Files & Assets library before testing the three-dot menu.', 'warning');
-      return;
-    }
     try {
-      const row = findFileRow(item);
-      if (!row) {
-        setStatus(`Menu test failed: could not match the rendered card for ${fileDisplayName(item) || 'the first file'}.`, 'error');
+      // This is deliberately independent from the captured download cache.
+      // Grok virtualizes its long Files list, so the first cached record may
+      // not currently have a rendered card.  The no-delete diagnostic tests a
+      // real, mounted native action control instead.
+      const candidate = fileActionCardCandidates()[0];
+      if (!candidate?.button || !candidate?.card) {
+        setStatus('Menu test failed: no rendered Grok Files card with a native File actions control is available yet.', 'error');
         return;
       }
-      const trigger = findMoreOptionsButton(row);
-      if (!trigger) {
-        setStatus(`Menu test failed: matched ${fileDisplayName(item) || 'the file'}, but could not identify its File actions button.`, 'error');
-        return;
-      }
-      setStatus(`Testing the File actions menu for ${fileDisplayName(item) || 'the first file'}…`);
-      if (!clickLikeUser(trigger)) {
-        setStatus(`Menu test failed: Grok's File actions button could not be activated for ${fileDisplayName(item) || 'the file'}.`, 'error');
+      const label = filenameFromCard(candidate.card) || 'the first visible file';
+      setStatus(`Testing the native File actions menu for ${label}…`);
+      if (!clickLikeUser(candidate.button)) {
+        setStatus(`Menu test failed: Grok's native File actions button could not be activated for ${label}.`, 'error');
         return;
       }
       const deleteAction = await waitForDeleteMenuAction();
       if (!deleteAction) {
-        setStatus(`Menu test failed: activated File actions for ${fileDisplayName(item) || 'the file'}, but no visible Delete option appeared.`, 'error');
+        setStatus(`Menu test failed: activated File actions for ${label}, but no visible Delete option appeared.`, 'error');
         return;
       }
-      setStatus(`Menu test passed: matched ${fileDisplayName(item) || 'the file'} and found its visible Delete option. The menu is left open; no file was deleted.`, 'success');
+      setStatus(`Menu test passed: opened native File actions for ${label} and found its visible Delete option. The menu is left open; no file was deleted.`, 'success');
     } catch (error) {
       setStatus(`Menu test failed safely: ${error?.message || error}`, 'error');
     }

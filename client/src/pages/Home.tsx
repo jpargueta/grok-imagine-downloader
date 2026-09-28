@@ -13,17 +13,28 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.21";
+const SCRIPT_VERSION = "1.0.22";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.21",
+    version: "1.0.22",
     date: "Sep 2026",
     tag: "latest",
     tagColor: "#6366f1",
+    changes: [
+      { type: "fix", text: "The non-destructive Files three-dot diagnostic now tests a real rendered Grok card, rather than a background-cached record that may be outside Grok’s virtualized list." },
+      { type: "safety", text: "Files actions now require an exact rendered native File actions control; ambiguous duplicate filenames are retained rather than risking an action on the wrong card." },
+      { type: "improve", text: "The diagnostic reports the visible file it tested and still leaves the menu open without clicking Delete." },
+    ],
+  },
+  {
+    version: "1.0.21",
+    date: "Sep 2026",
+    tag: "previous",
+    tagColor: "#475569",
     changes: [
       { type: "fix", text: "Files deletion now waits up to 15 seconds for Grok’s native confirmation to close instead of treating a 650 ms UI delay as a failure." },
       { type: "improve", text: "If Grok’s own deletion request remains pending, the audit trail identifies the upstream native deletion timeout and retains the item." },
