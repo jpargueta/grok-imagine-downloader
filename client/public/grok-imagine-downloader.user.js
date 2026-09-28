@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.20
+// @version      1.0.21
 // @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files deletion uses Grok's native per-card Download action, then the same card's confirmed Delete action.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.20';
+  const SCRIPT_VERSION = '1.0.21';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -55,6 +55,7 @@
   // handoff before opening the matching card's Delete flow.
   const NATIVE_DOWNLOAD_HANDOFF_MS = 1500;
   const FILE_ACTION_MENU_TIMEOUT_MS = 2500;
+  const FILE_DELETE_CONFIRM_TIMEOUT_MS = 15000;
 
   const FOLDER_PRESETS = [
     { label: 'grok-imagine (default)', value: 'grok-imagine' },
@@ -1647,9 +1648,16 @@
     await sleep(350);
     const confirmBtn = findFileDeleteConfirmation(item);
     if (!confirmBtn) return { ok: false, reason: `Grok did not show a delete confirmation for ${fileDisplayName(item) || 'this item'}.` };
-    confirmBtn.click();
-    await sleep(650);
-    if (isVisibleElement(confirmBtn)) return { ok: false, reason: `Grok kept the delete confirmation open for ${fileDisplayName(item) || 'this item'}.` };
+    if (!clickLikeUser(confirmBtn)) return { ok: false, reason: `Grok's delete confirmation could not be activated for ${fileDisplayName(item) || 'this item'}.` };
+
+    // Consumer Files deletions are asynchronous. Give Grok's native request
+    // up to 15 seconds to settle before reporting failure; the old 650ms
+    // check incorrectly treated its normal UI lag as an immediate failure.
+    const deadline = Date.now() + FILE_DELETE_CONFIRM_TIMEOUT_MS;
+    while (Date.now() < deadline && isVisibleElement(confirmBtn)) await sleep(250);
+    if (isVisibleElement(confirmBtn)) {
+      return { ok: false, reason: `Grok kept the delete confirmation open for ${FILE_DELETE_CONFIRM_TIMEOUT_MS / 1000} seconds. The native Grok deletion did not complete, so the file was retained.` };
+    }
     state.fileAssetCache = (state.fileAssetCache || []).filter(asset => asset.id !== item.id && asset.url !== item.url);
     GM_setValue(FILE_ASSET_CACHE_KEY, state.fileAssetCache);
     return { ok: true };

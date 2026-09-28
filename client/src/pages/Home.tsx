@@ -13,17 +13,27 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.20";
+const SCRIPT_VERSION = "1.0.21";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.20",
+    version: "1.0.21",
     date: "Sep 2026",
     tag: "latest",
     tagColor: "#6366f1",
+    changes: [
+      { type: "fix", text: "Files deletion now waits up to 15 seconds for Grok’s native confirmation to close instead of treating a 650 ms UI delay as a failure." },
+      { type: "improve", text: "If Grok’s own deletion request remains pending, the audit trail identifies the upstream native deletion timeout and retains the item." },
+    ],
+  },
+  {
+    version: "1.0.20",
+    date: "Sep 2026",
+    tag: "previous",
+    tagColor: "#475569",
     changes: [
       { type: "fix", text: "Files three-dot menus now use Grok/Radix’s native pointer-down, mouse-down, pointer-up, mouse-up, and click activation path instead of an insufficient click-only event." },
       { type: "fix", text: "Menu actions wait up to 2.5 seconds for Grok’s animated action menu and recognize Download/Delete labels with descriptive text." },
