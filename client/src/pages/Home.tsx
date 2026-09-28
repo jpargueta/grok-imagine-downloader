@@ -13,17 +13,28 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.15";
+const SCRIPT_VERSION = "1.0.16";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.15",
+    version: "1.0.16",
     date: "Sep 2026",
     tag: "latest",
     tagColor: "#6366f1",
+    changes: [
+      { type: "new", text: "Files & Assets now has a primary Download Only action that saves selected files while explicitly keeping them on Grok — ideal for safe verification and backups." },
+      { type: "improve", text: "Files deletion is now isolated behind a distinct Download + Delete action with its own permanent-deletion confirmation, eliminating accidental deletion during ordinary downloads." },
+      { type: "improve", text: "The Files audit trail reports local-download confirmation and retention status for download-only batches." },
+    ],
+  },
+  {
+    version: "1.0.15",
+    date: "Sep 2026",
+    tag: "previous",
+    tagColor: "#475569",
     changes: [
       { type: "fix", text: "Files & Assets now rejects Grok page, navigation, and nested preview URLs instead of treating them as downloadable files." },
       { type: "fix", text: "Every DOM-captured Files asset is now tied to its rendered card’s displayed filename (for example, generated_video.mp4 or edited-image.jpg), eliminating anonymous _Grok_file_asset downloads." },

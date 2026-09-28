@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.15
-// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files mode captures named asset URLs from real file cards, has bounded download outcomes, and uses Grok's File actions menu safely after confirmation.
+// @version      1.0.16
+// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files mode captures named asset URLs, supports a safe download-only verification path, and only deletes through an explicit separate action after confirmation.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.15';
+  const SCRIPT_VERSION = '1.0.16';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -1707,21 +1707,33 @@
       const unfavBtn = document.getElementById('gid-btn-unfavorite');
       const bothBtn = document.getElementById('gid-btn-both');
       if (dlBtn) dlBtn.textContent = state.sourceMode === 'files'
-        ? `⬇🗑 Download + Delete Selected (${state.selectedIds.size})`
+        ? `⬇ Download Selected (${state.selectedIds.size}) — Keep on Grok`
         : `⬇ Download Selected (${state.selectedIds.size})`;
       const removeLabel = state.sourceMode === 'all' ? 'Delete' : 'Unfavorite';
       if (unfavBtn) unfavBtn.textContent = `🗑 ${removeLabel} Selected (${state.selectedIds.size})`;
-      if (bothBtn) bothBtn.textContent = `⬇🗑 Download + ${removeLabel} Selected (${state.selectedIds.size})`;
+      if (bothBtn) bothBtn.textContent = state.sourceMode === 'files'
+        ? `⬇🗑 Download + Delete Selected (${state.selectedIds.size})`
+        : `⬇🗑 Download + ${removeLabel} Selected (${state.selectedIds.size})`;
     } else {
       banner.classList.remove('visible');
       const dlBtn = document.getElementById('gid-btn-download');
       const unfavBtn = document.getElementById('gid-btn-unfavorite');
       const bothBtn = document.getElementById('gid-btn-both');
-      if (dlBtn) dlBtn.textContent = state.sourceMode === 'files' ? '⬇🗑 Download + Delete Files' : '⬇ Download All';
+      if (dlBtn) dlBtn.textContent = state.sourceMode === 'files' ? '⬇ Download Files — Keep on Grok' : '⬇ Download All';
       const removeLabel2 = state.sourceMode === 'all' ? 'Delete' : 'Unfavorite';
       if (unfavBtn) unfavBtn.textContent = `🗑 ${removeLabel2} All (Remove from Server)`;
-      if (bothBtn) bothBtn.textContent = `⬇🗑 Download + ${removeLabel2} All`;
+      if (bothBtn) bothBtn.textContent = state.sourceMode === 'files'
+        ? '⬇🗑 Download + Delete Files'
+        : `⬇🗑 Download + ${removeLabel2} All`;
     }
+
+    // Files has two intentionally distinct operations: the primary button is
+    // download-only (safe for validation), while the violet secondary action
+    // is the only path that can remove a file after a confirmed local save.
+    const unfavBtn = document.getElementById('gid-btn-unfavorite');
+    const bothBtn = document.getElementById('gid-btn-both');
+    if (unfavBtn) unfavBtn.style.display = state.sourceMode === 'files' ? 'none' : '';
+    if (bothBtn) bothBtn.style.display = '';
   }
 
   function updateDryRunToggleUI() {
@@ -2201,15 +2213,33 @@
     }
     if (state.sourceMode === 'files') {
       if (!isFilesPage()) {
-        setStatus('Open Grok’s Files & Assets page before starting Download + Delete.', 'warning');
+        setStatus('Open Grok’s Files & Assets page before starting a Files download.', 'warning');
         return;
       }
-      const confirmed = confirm(`Download and permanently delete ${items.length} file${items.length === 1 ? '' : 's'}?\n\nEach file is deleted from Grok only after its local download completes successfully. Failed downloads and files that cannot be matched to a Grok delete control are left on the server.\n\nProceed?`);
-      if (!confirmed) return;
-      await doDownloadAndDeleteFiles(items, items, 0);
+      await doDownloadItems(items, items, 0);
       return;
     }
     await doDownloadItems(items, items, 0);
+  }
+
+  async function doDownloadAndRemove() {
+    if (state.sourceMode !== 'files') {
+      await doDownloadAndUnfavorite();
+      return;
+    }
+    if (state.isDownloading) return;
+    const items = getActiveItems();
+    if (items.length === 0) {
+      setStatus('No items to download. Fetch your library first.', 'warning');
+      return;
+    }
+    if (!isFilesPage()) {
+      setStatus('Open Grok’s Files & Assets page before starting Download + Delete.', 'warning');
+      return;
+    }
+    const confirmed = confirm(`Download and permanently delete ${items.length} file${items.length === 1 ? '' : 's'}?\n\nEach file is deleted from Grok only after its local download completes successfully. Failed downloads and files that cannot be matched to a Grok delete control are left on the server.\n\nProceed?`);
+    if (!confirmed) return;
+    await doDownloadAndDeleteFiles(items, items, 0);
   }
 
   async function doDownloadAndDeleteFiles(items, allItems, startOffset) {
@@ -2297,7 +2327,9 @@
     state.failedCount = 0;
     setButtonsDisabled(true);
     setProgress(0, `0 / ${items.length}`);
-    setStatus(`Downloading ${items.length} files…`);
+    const filesMode = state.sourceMode === 'files';
+    setStatus(filesMode ? `Downloading ${items.length} Files & Assets item${items.length === 1 ? '' : 's'} — keeping them on Grok…` : `Downloading ${items.length} files…`);
+    if (filesMode) resetFileStatuses(items);
     saveResume('download', startOffset, allItems);
 
     for (let i = 0; i < items.length; i++) {
@@ -2307,8 +2339,16 @@
         updateReconnectBanner();
         break;
       }
-      const download = await downloadItem(items[i]);
-      if (download.ok) state.downloadedCount++; else state.failedCount++;
+      const item = items[i];
+      if (filesMode) setFileStatus(item, 'downloading', 'Saving to your selected Downloads folder…');
+      const download = await downloadItem(item, detail => filesMode && setFileStatus(item, 'downloading', detail));
+      if (download.ok) {
+        state.downloadedCount++;
+        if (filesMode) setFileStatus(item, 'downloaded', 'Local download confirmed; retained on Grok.');
+      } else {
+        state.failedCount++;
+        if (filesMode) setFileStatus(item, 'failed', `${download.reason || 'Browser download failed or timed out.'} Retained on Grok.`);
+      }
       setProgress(((i + 1) / items.length) * 100, `${i + 1} / ${items.length} — ${state.downloadedCount} saved, ${state.failedCount} failed`);
       updateStat('downloaded', state.downloadedCount);
       // Save checkpoint every 10 items
@@ -2319,7 +2359,9 @@
     if (!state.cancelRequested) {
       clearResume();
       updateReconnectBanner();
-      setStatus(`Done! ${state.downloadedCount} downloaded${state.failedCount > 0 ? `, ${state.failedCount} failed` : ''}.`, state.failedCount > 0 ? 'warning' : 'success');
+      setStatus(filesMode
+        ? `Done! ${state.downloadedCount} downloaded and retained on Grok${state.failedCount > 0 ? `, ${state.failedCount} failed` : ''}.`
+        : `Done! ${state.downloadedCount} downloaded${state.failedCount > 0 ? `, ${state.failedCount} failed` : ''}.`, state.failedCount > 0 ? 'warning' : 'success');
     }
     state.isDownloading = false;
     setButtonsDisabled(false);
@@ -2795,7 +2837,7 @@
 
     document.getElementById('gid-btn-download').addEventListener('click', doDownload);
     document.getElementById('gid-btn-unfavorite').addEventListener('click', () => doUnfavorite());
-    document.getElementById('gid-btn-both').addEventListener('click', doDownloadAndUnfavorite);
+    document.getElementById('gid-btn-both').addEventListener('click', doDownloadAndRemove);
     document.getElementById('gid-btn-dryrun').addEventListener('click', doDryRun);
 
     document.getElementById('gid-btn-cancel').addEventListener('click', () => {
