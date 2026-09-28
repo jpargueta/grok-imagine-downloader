@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.18
+// @version      1.0.19
 // @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files deletion uses Grok's native per-card Download action, then the same card's confirmed Delete action.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.18';
+  const SCRIPT_VERSION = '1.0.19';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -2896,7 +2896,7 @@
       await doFetch();
       const hasItems = state.posts.length > 0;
       const enabledIds = state.sourceMode === 'files'
-        ? ['gid-btn-download', 'gid-btn-dryrun', 'gid-btn-picker', 'gid-btn-test-file-menu']
+        ? ['gid-btn-download', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker', 'gid-btn-test-file-menu']
         : ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker'];
       ['gid-btn-download', 'gid-btn-unfavorite', 'gid-btn-both', 'gid-btn-dryrun', 'gid-btn-picker', 'gid-btn-test-file-menu'].forEach(id => {
         const el = document.getElementById(id);
