@@ -24,4 +24,6 @@
 - [x] Diagnose the reported Files & Assets batch stall caused by unbounded `GM_download` waits and potentially stale captured URLs.
 - [x] Implement v1.0.13: fresh document-start Files capture (Fetch + XHR), a fresh cache, bounded download outcomes, cancellation, and per-item reconnect checkpoints.
 - [x] Validate userscript syntax, the download success/error/cancel paths, and the production landing build.
-- [ ] Publish v1.0.13, then test a one-file Files batch in the user’s authenticated Grok session. Confirm the audit trail advances or report its explicit failure reason before attempting a larger batch.
+- [x] Publish v1.0.13, then test a one-file Files batch in the user’s authenticated Grok session. Confirm the audit trail advances or report its explicit failure reason before attempting a larger batch.
+- [x] Inspect the authenticated Grok Files DOM and correct v1.0.15 Files capture so it keeps card filenames and only direct asset URLs, rather than downloading page/preview URLs as anonymous files.
+- [ ] Update to v1.0.15, clear the old Files URL cache, fetch the refreshed library, then run one deliberately selected item to confirm local download, card menu match, and deletion audit outcomes.
