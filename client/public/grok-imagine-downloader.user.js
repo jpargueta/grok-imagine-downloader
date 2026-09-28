@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.13
-// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files mode captures fresh URLs at page start and never waits indefinitely for a download callback.
+// @version      1.0.14
+// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files mode captures fresh URLs at page start, has bounded download outcomes, and uses Grok's File actions menu safely after confirmation.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.13';
+  const SCRIPT_VERSION = '1.0.14';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -1334,11 +1334,43 @@
     return null;
   }
 
+  // The current Grok Files UI gives every visible file card one exact, stable
+  // menu trigger: `aria-label="File actions"`.  Prefer the trigger's direct
+  // parent card over broad class-name guesses.  In particular, the page's
+  // scroll container also contains every filename and must never be treated as
+  // the card that owns a destructive action.
+  function fileActionCardCandidates() {
+    return Array.from(document.querySelectorAll('button[aria-label="File actions"][aria-haspopup="menu"]'))
+      .filter(button => !isGidElement(button) && !button.closest('[role="dialog"]'))
+      .map(button => ({ button, card: button.parentElement }))
+      .filter(({ card }) => card && !isGidElement(card) && !card.closest('[role="dialog"]'));
+  }
+
+  function findFileActionCardByName(item) {
+    const targetName = fileDisplayName(item).trim().toLowerCase();
+    const targetId = String(item.id || '').replace(/^file:/, '').toLowerCase();
+    if (!targetName && !targetId) return null;
+    const ranked = [];
+    for (const { card } of fileActionCardCandidates()) {
+      const text = (card.innerText || '').trim().toLowerCase();
+      let score = 0;
+      if (targetId && text.includes(targetId)) score += 1000;
+      if (targetName && text.includes(targetName)) score += 100;
+      if (score) ranked.push({ card, score, size: text.length });
+    }
+    ranked.sort((a, b) => b.score - a.score || a.size - b.size);
+    return ranked[0]?.card || null;
+  }
+
   function findFileRow(item) {
     const targetName = fileDisplayName(item).trim().toLowerCase();
     const targetId = String(item.id || '').replace(/^file:/, '');
     const located = findCardByLocator(item.cardLocator);
-    if (located && !isGidElement(located) && !located.closest('[role="dialog"]')) return located;
+    if (located && !isGidElement(located) && !located.closest('[role="dialog"]') && findMoreOptionsButton(located)) return located;
+    const byAssetUrl = findCardByAssetUrl(item);
+    if (byAssetUrl && findMoreOptionsButton(byAssetUrl)) return byAssetUrl;
+    const byVisibleActionCard = findFileActionCardByName(item);
+    if (byVisibleActionCard) return byVisibleActionCard;
     const ranked = [];
     for (const row of fileRowCandidates()) {
       const attrs = [row.getAttribute('data-file-id'), row.getAttribute('data-asset-id'), row.getAttribute('data-id')].filter(Boolean);
@@ -1349,7 +1381,7 @@
       if (score) ranked.push({ row, score, size: text.length });
     }
     ranked.sort((a, b) => b.score - a.score || a.size - b.size);
-    return findCardByAssetUrl(item) || ranked[0]?.row || null;
+    return ranked[0]?.row || null;
   }
 
   function findDirectDeleteButton(scope) {
@@ -1384,27 +1416,34 @@
     }) || null;
   }
 
-  async function clickLikeUser(element) {
-    if (!element) return false;
-    element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-    await sleep(120);
-    element.focus?.({ preventScroll: true });
-    const options = { bubbles: true, cancelable: true, view: window };
-    ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach(type => {
-      const EventType = type.startsWith('pointer') && window.PointerEvent ? PointerEvent : MouseEvent;
-      element.dispatchEvent(new EventType(type, options));
-    });
-    element.click();
-    return true;
+  function clickLikeUser(element) {
+    if (!element || !element.isConnected) return false;
+    try {
+      // Calling the native control directly is the reliable equivalent of a
+      // click for Grok's React/Radix controls.  The earlier synthetic pointer
+      // sequence waited on a sandbox timer before reaching .click(), which
+      // left the live non-destructive diagnostic indefinitely at "Testing…".
+      element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
+      element.focus?.({ preventScroll: true });
+      element.click();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
-  async function waitForDeleteMenuAction(timeout = 1800) {
-    const deadline = Date.now() + timeout;
-    while (Date.now() < deadline) {
-      const action = findDeleteMenuAction();
-      if (action) return action;
-      await sleep(80);
-    }
+  async function waitForDeleteMenuAction() {
+    // React commits this menu in the same task or the immediately following
+    // microtask.  Avoid timer-based polling here: timers in the userscript
+    // sandbox can be paused while a remote browser session is being inspected.
+    let action = findDeleteMenuAction();
+    if (action) return action;
+    await Promise.resolve();
+    action = findDeleteMenuAction();
+    if (action) return action;
+    await Promise.resolve();
+    action = findDeleteMenuAction();
+    if (action) return action;
     return null;
   }
 
@@ -1418,24 +1457,31 @@
       setStatus('Fetch your Files & Assets library before testing the three-dot menu.', 'warning');
       return;
     }
-    const row = findFileRow(item);
-    if (!row) {
-      setStatus(`Menu test failed: could not match the rendered card for ${fileDisplayName(item) || 'the first file'}.`, 'error');
-      return;
+    try {
+      const row = findFileRow(item);
+      if (!row) {
+        setStatus(`Menu test failed: could not match the rendered card for ${fileDisplayName(item) || 'the first file'}.`, 'error');
+        return;
+      }
+      const trigger = findMoreOptionsButton(row);
+      if (!trigger) {
+        setStatus(`Menu test failed: matched ${fileDisplayName(item) || 'the file'}, but could not identify its File actions button.`, 'error');
+        return;
+      }
+      setStatus(`Testing the File actions menu for ${fileDisplayName(item) || 'the first file'}…`);
+      if (!clickLikeUser(trigger)) {
+        setStatus(`Menu test failed: Grok's File actions button could not be activated for ${fileDisplayName(item) || 'the file'}.`, 'error');
+        return;
+      }
+      const deleteAction = await waitForDeleteMenuAction();
+      if (!deleteAction) {
+        setStatus(`Menu test failed: activated File actions for ${fileDisplayName(item) || 'the file'}, but no visible Delete option appeared.`, 'error');
+        return;
+      }
+      setStatus(`Menu test passed: matched ${fileDisplayName(item) || 'the file'} and found its visible Delete option. The menu is left open; no file was deleted.`, 'success');
+    } catch (error) {
+      setStatus(`Menu test failed safely: ${error?.message || error}`, 'error');
     }
-    const trigger = findMoreOptionsButton(row);
-    if (!trigger) {
-      setStatus(`Menu test failed: matched ${fileDisplayName(item) || 'the file'}, but could not identify its three-dot button.`, 'error');
-      return;
-    }
-    setStatus(`Testing the three-dot menu for ${fileDisplayName(item) || 'the first file'}…`);
-    await clickLikeUser(trigger);
-    const deleteAction = await waitForDeleteMenuAction();
-    if (!deleteAction) {
-      setStatus(`Menu test failed: clicked the three-dot button for ${fileDisplayName(item) || 'the file'}, but no visible Delete option appeared.`, 'error');
-      return;
-    }
-    setStatus(`Menu test passed: matched ${fileDisplayName(item) || 'the file'} and found its visible Delete option. The menu is left open; no file was deleted.`, 'success');
   }
 
   async function openFileDeleteFlow(item) {

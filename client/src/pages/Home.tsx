@@ -13,17 +13,28 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.13";
+const SCRIPT_VERSION = "1.0.14";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.13",
+    version: "1.0.14",
     date: "Sep 2026",
     tag: "latest",
     tagColor: "#6366f1",
+    changes: [
+      { type: "fix", text: "Verified Grok’s live Files cards expose an explicit “File actions” menu button. The Files adapter now targets that card-level trigger directly instead of relying on broad container guesses." },
+      { type: "fix", text: "The no-delete File actions diagnostic no longer waits on a timer-based synthetic pointer sequence. It now activates the native Grok control directly and always returns a concrete pass or failure message." },
+      { type: "improve", text: "Card matching now prefers the specific visible File actions card, preventing a page-level scroll container from being mistaken for the asset card that owns deletion." },
+    ],
+  },
+  {
+    version: "1.0.13",
+    date: "Sep 2026",
+    tag: "previous",
+    tagColor: "#475569",
     changes: [
       { type: "fix", text: "Files & Assets now begins collecting its fresh download URLs at document start and captures both Fetch and XMLHttpRequest traffic, rather than relying on URLs seen on a previous visit." },
       { type: "fix", text: "A Files download can no longer process forever: every item has a 90-second no-signal/stall guard and a 10-minute absolute safety limit. Failures are shown in the audit trail and remain on Grok." },
