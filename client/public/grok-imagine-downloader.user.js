@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.14
-// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files mode captures fresh URLs at page start, has bounded download outcomes, and uses Grok's File actions menu safely after confirmation.
+// @version      1.0.15
+// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files mode captures named asset URLs from real file cards, has bounded download outcomes, and uses Grok's File actions menu safely after confirmation.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.14';
+  const SCRIPT_VERSION = '1.0.15';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -862,7 +862,22 @@
     try {
       const url = new URL(value, window.location.origin);
       if (!/^https?:$/.test(url.protocol)) return false;
-      return !url.pathname.includes('/rest/') && !url.pathname.endsWith('/files');
+      const path = decodeURIComponent(url.pathname || '/').toLowerCase();
+      // A page root, navigation URL, or REST route is not a file.  Previous
+      // builds accepted these values from nested page state and downloaded the
+      // Grok shell as anonymous `_Grok_file_asset.jpg` files.
+      if (path === '/' || path === '/files' || path.startsWith('/rest/')) return false;
+      return true;
+    } catch { return false; }
+  }
+
+  function isLikelyDirectAssetUrl(value) {
+    if (!isUsableFileUrl(value)) return false;
+    try {
+      const url = new URL(value, window.location.origin);
+      const path = decodeURIComponent(url.pathname || '').toLowerCase();
+      const hasFileExtension = /\.(?:avif|bmp|csv|gif|heic|jpeg|jpg|json|m4a|mov|mp3|mp4|pdf|png|svg|txt|wav|webm|webp|zip)$/.test(path);
+      return url.hostname === 'assets.grok.com' || hasFileExtension;
     } catch { return false; }
   }
 
@@ -873,12 +888,33 @@
     return map[ext] || 'application/octet-stream';
   }
 
+  function filenameFromCard(card) {
+    if (!card) return '';
+    const text = (card.innerText || card.textContent || '').replace(/\s+/g, ' ').trim();
+    // Current Grok card format: "generated_video.mp4 Created by Grok • …"
+    // The same pattern also handles user uploads: "example.pdf Uploaded by me • …".
+    const match = text.match(/^(.+?)\s+(?:created\s+by|uploaded\s+by)\b/i);
+    if (match?.[1]) return match[1].trim();
+    const named = Array.from(card.querySelectorAll('span, [data-filename], [data-file-name]'))
+      .map(el => (el.getAttribute('data-filename') || el.getAttribute('data-file-name') || el.textContent || '').trim())
+      .find(value => value && value.length <= 240 && /\.[a-z0-9]{2,10}$/i.test(value));
+    return named || '';
+  }
+
   function normalizeFileAsset(raw, fallback = {}) {
     if (!raw || typeof raw !== 'object') return null;
-    const rawUrl = raw.downloadUrl || raw.contentUrl || raw.signedUrl || raw.fileUrl || raw.mediaUrl || raw.url || raw.href || fallback.url;
+    const explicitUrl = raw.downloadUrl || raw.contentUrl || raw.signedUrl || raw.fileUrl;
+    const rawUrl = explicitUrl || raw.mediaUrl || raw.url || raw.href || fallback.url;
     if (!isUsableFileUrl(rawUrl)) return null;
-    const url = new URL(rawUrl, window.location.origin).href;
+    const originalUrl = new URL(rawUrl, window.location.origin);
+    originalUrl.hash = '';
+    const url = originalUrl.href;
     const originalFilename = raw.filename || raw.fileName || raw.name || raw.title || fallback.filename || '';
+    // Never turn arbitrary nested `url` values into downloads. A URL seen in
+    // page JSON must be explicitly file-like or carry the corresponding card
+    // filename. DOM scans supply both the card name and a direct media URL.
+    if (!explicitUrl && !originalFilename && !fallback.filename) return null;
+    if (!explicitUrl && !isLikelyDirectAssetUrl(url)) return null;
     const id = String(raw.id || raw.fileId || raw.assetId || raw.uuid || fallback.id || url);
     const mimeType = inferFileMimeType(originalFilename, raw.mimeType || raw.contentType || raw.type || fallback.mimeType || '');
     const createValue = raw.createdAt || raw.created_at || raw.createTime || raw.updatedAt || raw.updated_at || fallback.createTime || '';
@@ -947,15 +983,18 @@
   function scanFilesPageDom() {
     if (!isFilesPage()) return 0;
     let count = 0;
-    document.querySelectorAll('a[href], video[src], video source[src], img[src]').forEach(el => {
+    document.querySelectorAll('a[download][href], video[src], video source[src], img[src]').forEach(el => {
       const url = el.href || el.currentSrc || el.src;
-      const filename = el.getAttribute('download') || el.getAttribute('title') || el.getAttribute('alt') || '';
       const card = findNearestFileCard(el);
       // Do not cache page chrome, avatars, or unrelated images. A DOM-derived
-      // URL is useful only when it belongs to a rendered Files asset card.
+      // URL is useful only when it belongs to a rendered Files asset card and
+      // that card supplies a file name. This prevents thumbnail/page URLs from
+      // becoming anonymous browser downloads.
       if (!card) return;
+      const filename = filenameFromCard(card) || el.getAttribute('download') || el.getAttribute('title') || el.getAttribute('alt') || '';
+      if (!filename || !isLikelyDirectAssetUrl(url)) return;
       const cardLocator = getCardLocator(card);
-      if (captureFileAsset({ url, filename, mimeType: el.type || '', cardLocator })) count++;
+      if (captureFileAsset({ fileUrl: url, filename, mimeType: el.type || '', cardLocator })) count++;
     });
     return count;
   }
@@ -1124,9 +1163,10 @@
 
   async function fetchCapturedFileAssets() {
     scanFilesPageDom();
-    const assets = Array.isArray(state.fileAssetCache) ? state.fileAssetCache : [];
+    const cached = Array.isArray(state.fileAssetCache) ? state.fileAssetCache : [];
+    const assets = cached.filter(item => item?.originalFilename && isLikelyDirectAssetUrl(item.url));
     if (assets.length === 0) {
-      throw new Error('No Files & Assets downloads captured yet. Open See files and assets / Manage, let it load, click a file Download action once, then return here and fetch again.');
+      throw new Error('No named Files & Assets downloads were captured yet. Click Clear & Refresh Files URLs, let the Manage page load, then Fetch Library again.');
     }
     return assets;
   }
