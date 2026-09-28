@@ -13,17 +13,28 @@ const HERO_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFj
 const SCRIPT_ICON = "https://d2xsxph8kpxj0f.cloudfront.net/310519663473487032/7SGFFjgcTXTDttBaSPwZr2/script-icon-BnNubc4BWN7qA5DZaJKBSa.webp";
 const SCRIPT_URL = "/grok-imagine-downloader.user.js";
 const SCRIPT_UPDATE_URL = "/grok-imagine-downloader.user.js";
-const SCRIPT_VERSION = "1.0.16";
+const SCRIPT_VERSION = "1.0.17";
 const ETH_ADDRESS = "0x274b41cC717b95193bb74A9370e13FB987f3E56a";
 const ENS_NAME = "obijuan.uni.eth";
 const QR_CODE_URL = "/manus-storage/qr-donate_29d775c6.jpeg";
 
 const changelog = [
   {
-    version: "1.0.16",
+    version: "1.0.17",
     date: "Sep 2026",
     tag: "latest",
     tagColor: "#6366f1",
+    changes: [
+      { type: "new", text: "The downloader sidebar can now be minimized with its persistent header control and restored from a compact floating launcher." },
+      { type: "improve", text: "The sidebar header stays visible while its contents scroll, keeping the minimize action and current version accessible at all times." },
+      { type: "improve", text: "The minimized state persists across Grok pages until the launcher is used to restore the panel." },
+    ],
+  },
+  {
+    version: "1.0.16",
+    date: "Sep 2026",
+    tag: "previous",
+    tagColor: "#475569",
     changes: [
       { type: "new", text: "Files & Assets now has a primary Download Only action that saves selected files while explicitly keeping them on Grok — ideal for safe verification and backups." },
       { type: "improve", text: "Files deletion is now isolated behind a distinct Download + Delete action with its own permanent-deletion confirmation, eliminating accidental deletion during ordinary downloads." },

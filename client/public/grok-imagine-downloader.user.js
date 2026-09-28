@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Grok Imagine Downloader
 // @namespace    https://grok.com
-// @version      1.0.16
-// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files mode captures named asset URLs, supports a safe download-only verification path, and only deletes through an explicit separate action after confirmation.
+// @version      1.0.17
+// @description  Bulk download Grok Imagine creations and Files & Assets Manager media/files. Files mode captures named asset URLs, supports safe download-only verification, and offers a persistent minimizable sidebar.
 // @author       Grok Imagine Downloader
 // @match        https://grok.com/*
 // @icon         https://grok.com/favicon.ico
@@ -24,7 +24,7 @@
   'use strict';
 
   // ─── Constants ────────────────────────────────────────────────────────────
-  const SCRIPT_VERSION = '1.0.16';
+  const SCRIPT_VERSION = '1.0.17';
   const API = {
     LIST:   'https://grok.com/rest/media/post/list',
     UNLIKE: 'https://grok.com/rest/media/post/unlike',
@@ -83,6 +83,7 @@
     activeDownload: null,
     filterType: 'all',
     dryRunMode: GM_getValue('dryRunMode', false),
+    panelMinimized: GM_getValue('panelMinimized', false),
     // Resume / reconnect state
     resumeOp: GM_getValue('resumeOp', null),       // 'download' | 'unfavorite' | 'both'
     resumeIndex: GM_getValue('resumeIndex', 0),    // next item index to process
@@ -138,13 +139,21 @@
     }
     #gid-toggle-btn:active { transform: scale(0.95); }
     #gid-toggle-btn svg { width: 24px; height: 24px; fill: white; }
+    #gid-panel:not(.gid-hidden) + #gid-toggle-btn { opacity: 0; pointer-events: none; transform: translateY(8px) scale(0.9); }
+    #gid-panel.gid-hidden + #gid-toggle-btn { opacity: 1; pointer-events: auto; transform: none; }
 
     .gid-header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 14px 16px 10px;
       border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: rgba(8, 12, 24, 0.98);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
     }
     .gid-title-row { display: flex; align-items: center; gap: 8px; }
     .gid-title {
@@ -2521,13 +2530,14 @@
   function buildPanel() {
     const panel = document.createElement('div');
     panel.id = 'gid-panel';
+    if (state.panelMinimized) panel.classList.add('gid-hidden');
     panel.innerHTML = `
       <div class="gid-header">
         <div class="gid-title-row">
           <span class="gid-title">⬇ Grok Imagine Downloader</span>
           <span class="gid-version-badge">v${SCRIPT_VERSION}</span>
         </div>
-        <button class="gid-close" id="gid-close-btn" title="Minimize">✕</button>
+        <button class="gid-close" id="gid-close-btn" title="Minimize downloader panel" aria-label="Minimize downloader panel">—</button>
       </div>
       <div class="gid-body">
 
@@ -2679,14 +2689,20 @@
   function buildToggleBtn() {
     const btn = document.createElement('button');
     btn.id = 'gid-toggle-btn';
-    btn.title = 'Grok Imagine Downloader';
+    btn.title = 'Restore Grok Imagine Downloader';
+    btn.setAttribute('aria-label', 'Restore Grok Imagine Downloader');
     btn.innerHTML = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 16l-6-6h4V4h4v6h4l-6 6zm-7 2h14v2H5v-2z"/></svg>`;
     return btn;
   }
 
   function attachEvents(panel) {
-    document.getElementById('gid-close-btn').addEventListener('click', () => panel.classList.add('gid-hidden'));
-    document.getElementById('gid-toggle-btn').addEventListener('click', () => panel.classList.toggle('gid-hidden'));
+    const setPanelMinimized = minimized => {
+      state.panelMinimized = minimized;
+      GM_setValue('panelMinimized', minimized);
+      panel.classList.toggle('gid-hidden', minimized);
+    };
+    document.getElementById('gid-close-btn').addEventListener('click', () => setPanelMinimized(true));
+    document.getElementById('gid-toggle-btn').addEventListener('click', () => setPanelMinimized(false));
 
     // Folder preset dropdown
     const folderSelect = document.getElementById('gid-folder-select');
